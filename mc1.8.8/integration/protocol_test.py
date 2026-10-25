@@ -120,6 +120,8 @@ class Client:
                 elif packet_id == 8:
                     x, y, z, yaw, pitch = struct.unpack(">dddff", body[:32])
                     self.send(6, struct.pack(">dddff?", x, y, z, yaw, pitch, True))
+                elif packet_id == 0x32 and body[-1:] == b"\x00":
+                    self.send(0x0F, body[:3] + b"\x01")
                 elif packet_id == 0x40:
                     raise AssertionError("play disconnect: " + repr(body))
         except Exception as error:
@@ -150,6 +152,25 @@ class Client:
 
     def contains(self, text, packets=None):
         return any(text.encode("utf-8") in body for _, body in (packets if packets is not None else self.packets))
+
+    def check_equipment(self, entity_id, expected, packets=None):
+        equipment = {}
+        for kind, body in packets if packets is not None else self.packets:
+            if kind != 4:
+                continue
+            stream = io.BytesIO(body)
+            if read_vint(stream) != entity_id:
+                continue
+            slot, item_id = struct.unpack(">hh", stream.read(4))
+            amount = struct.unpack(">b", stream.read(1))[0] if item_id != -1 else 0
+            assert 0 <= slot <= 4, "1.8 equipment uses the hand and four armor slots"
+            equipment[slot] = (item_id, amount)
+        for slot, item in expected.items():
+            assert equipment.get(slot) == item, \
+                f"NPC {entity_id} equipment slot {slot}: received {equipment.get(slot)}, expected {item}"
+
+    def click_window(self, window_id, slot, action, clicked_item=b"\xff\xff", button=0, mode=0):
+        self.send(0x0E, struct.pack(">BhBhB", window_id, slot, button, action, mode) + clicked_item)
 
     def player_info(self, packets=None):
         result = []
@@ -350,6 +371,53 @@ def main():
         assert any(kind == 4 and b"\x01\x14" in body for kind, body in packets), "diamond sword equipment sent"
         assert any(kind == 0x18 for kind, _ in packets), "virtual teleport sent"
         assert state["tab_names"] == tab_names, "renaming NPCs preserves their random Tab aliases"
+        state, packets = phase("equipopen")
+        windows = [body[0] for kind, body in packets if kind == 0x2D]
+        assert windows, "/npc equip opens the equipment window"
+        window_id = windows[-1]
+        packet_start = len(client.packets)
+        client.click_window(window_id, 9, 1)
+        state, _ = phase("equiphand")
+        client.check_equipment(state["ids"][1], {0: (276, 1)}, client.packets[packet_start:])
+        packet_start = len(client.packets)
+        client.click_window(window_id, 9, 2, struct.pack(">hbh", 276, 1, 0) + b"\x00")
+        state, _ = phase("equipremove")
+        client.check_equipment(state["ids"][1], {0: (-1, 0)}, client.packets[packet_start:])
+        phase("equipappleprepare")
+        packet_start = len(client.packets)
+        client.click_window(window_id, 9, 3)
+        state, _ = phase("equipapple")
+        client.check_equipment(state["ids"][1], {0: (260, 3)}, client.packets[packet_start:])
+        phase("equipprotectedprepare")
+        client.click_window(window_id, 0, 4, struct.pack(">hbh", 276, 1, 0) + b"\x00")
+        phase("equipprotected")
+        client.click_window(window_id, 14, 5)
+        phase("equipinvalidarmor")
+        phase("equipshiftprepare")
+        packet_start = len(client.packets)
+        client.click_window(window_id, 9, 6, struct.pack(">hbh", 260, 3, 0) + b"\x00", mode=1)
+        state, _ = phase("equipshiftout")
+        client.check_equipment(state["ids"][1], {0: (-1, 0)}, client.packets[packet_start:])
+        packet_start = len(client.packets)
+        client.click_window(window_id, 45, 7, struct.pack(">hbh", 260, 64, 0) + b"\x00", mode=1)
+        state, _ = phase("equipshiftin")
+        client.check_equipment(state["ids"][1], {0: (260, 64)}, client.packets[packet_start:])
+        packet_start = len(client.packets)
+        client.click_window(window_id, 9, 8, struct.pack(">hbh", 260, 64, 0) + b"\x00", button=1)
+        state, _ = phase("equiphalf")
+        client.check_equipment(state["ids"][1], {0: (260, 32)}, client.packets[packet_start:])
+        packet_start = len(client.packets)
+        client.click_window(window_id, 9, 9, struct.pack(">hbh", 260, 32, 0) + b"\x00", button=1)
+        state, _ = phase("equipplaceone")
+        client.check_equipment(state["ids"][1], {0: (260, 33)}, client.packets[packet_start:])
+        phase("equipbootsprepare")
+        packet_start = len(client.packets)
+        client.click_window(window_id, 14, 10)
+        state, _ = phase("equipboots")
+        client.check_equipment(state["ids"][1], {1: (313, 1)}, client.packets[packet_start:])
+        state, _ = phase("equiparmor")
+        player_equipment = {0: (276, 1), 1: (313, 1), 2: (312, 1), 3: (311, 1), 4: (310, 1)}
+        client.check_equipment(state["ids"][1], player_equipment)
         state, packets = phase("tabrefresh")
         assert state["tab_names"] == tab_names, "Tab refresh does not regenerate random aliases"
         client.check_tab_names(tab_names, packets)
@@ -362,6 +430,7 @@ def main():
             assert state["tab_names"] == tab_names, "skin changes preserve saved Tab aliases"
             client.check_skin(skin_uuid, texture_hash, packets)
             client.check_tab_names({skin_uuid: tab_names[skin_uuid]}, packets)
+            client.check_equipment(state["ids"][1], player_equipment, packets)
         phase("reregister")
         skin_refresh_start = len(client.timed_packets)
         _, packets = phase("skinrefresh")
@@ -387,10 +456,12 @@ def main():
         assert set(state["ids"] + state["holograms"]) <= client.spawned(packets), "in-range respawns"
         client.check_tab_names(tab_names, packets)
         client.check_skin(skin_uuid, "b" * 64, packets)
+        client.check_equipment(state["ids"][1], player_equipment, packets)
         state, packets = phase("world")
         assert set(state["ids"]) <= client.destroyed(packets), "world change destroys"
         state, packets = phase("near")
         assert set(state["ids"] + state["holograms"]) <= client.spawned(packets), "return to world respawns"
+        client.check_equipment(state["ids"][1], player_equipment, packets)
         state, packets = phase("filter")
         assert state["ids"][0] in client.destroyed(packets), "filtered NPC removed"
         assert state["ids"][0] not in client.spawned(packets), "cancelled seen event prevents spawning"
@@ -404,6 +475,7 @@ def main():
         assert state["tab_names"] == tab_names, "saved random aliases survive disk reload"
         client.check_tab_names(tab_names, packets)
         client.check_skin(skin_uuid, "b" * 64, packets)
+        client.check_equipment(state["ids"][1], player_equipment, packets)
         client.close()
         until(lambda: any("PacketTest left" in line for line in log_lines), "disconnect")
         client = Client(args.port)
@@ -412,6 +484,7 @@ def main():
         assert set(state["ids"] + state["holograms"]) <= client.spawned(), "reconnect restores all NPCs"
         client.check_tab_names(tab_names)
         client.check_skin(skin_uuid, "b" * 64)
+        client.check_equipment(state["ids"][1], player_equipment)
         extra_clients = [Client(args.port, "LookEast"), Client(args.port, "LookObserver")]
         until(lambda: all(connection.play for connection in extra_clients)
               and all(any(name + "[/" in line and "logged in with entity id" in line for line in log_lines)
@@ -427,6 +500,7 @@ def main():
         state, packets = phase("lookrefresh")
         look_id = state["ids"][1]
         client.check_skin(skin_uuid, "b" * 64, packets)
+        client.check_equipment(look_id, player_equipment, packets)
         for connection in [client] + extra_clients:
             connection.check_rotation(look_id, -90, 0)
         phase("save")

@@ -104,6 +104,18 @@ public final class PacketIntegration extends JavaPlugin implements Listener {
             throw new AssertionError(message);
     }
 
+    private void checkHand(Material type, int amount) {
+        ItemStack held = npcs.get(1).getOrAddTrait(Equipment.class).get(EquipmentSlot.HAND);
+        check(held != null && held.getType() == type && held.getAmount() == amount,
+                "GUI click updates the saved hand item");
+        ItemStack shown = player().getOpenInventory().getItem(9);
+        check(shown != null && shown.isSimilar(held) && shown.getAmount() == amount,
+                "GUI keeps the placed item and amount");
+        ItemStack backing = ((Player) npcs.get(1).getEntity()).getItemInHand();
+        check(backing != null && backing.isSimilar(held) && backing.getAmount() == amount,
+                "GUI click updates the backing player inventory");
+    }
+
     private void later(String phase, Runnable run) {
         Bukkit.getScheduler().runTaskLater(this, () -> {
             try {
@@ -206,6 +218,102 @@ public final class PacketIntegration extends JavaPlugin implements Listener {
                     npcs.get(1).setName("Alex");
                     npcs.get(2).setName("NewLongMerchantName");
                     later(phase, () -> check("\u00a78[NPC] Dealer".equals(npcs.get(0).getFullName()), "renamed display"));
+                    break;
+                case "equipopen":
+                    player().setOp(true);
+                    CitizensAPI.getDefaultNPCSelector().select(player(), npcs.get(1));
+                    Bukkit.dispatchCommand(player(), "npc equip");
+                    check(player().getOpenInventory().getTopInventory().getSize() == 18, "equipment GUI opened");
+                    check(player().getOpenInventory().getItem(0).getType() == Material.DIAMOND_SWORD,
+                            "hand slot is below the diamond sword icon");
+                    player().setItemOnCursor(new ItemStack(Material.DIAMOND_SWORD));
+                    later(phase, () -> {});
+                    break;
+                case "equiphand":
+                case "equipapple":
+                case "equipshiftin":
+                case "equiphalf":
+                case "equipplaceone":
+                    Material heldType = phase.equals("equiphand") ? Material.DIAMOND_SWORD : Material.APPLE;
+                    int heldAmount = phase.equals("equiphand") ? 1 : phase.equals("equipshiftin") ? 64
+                            : phase.equals("equiphalf") ? 32 : phase.equals("equipplaceone") ? 33 : 3;
+                    later(phase, () -> {
+                        checkHand(heldType, heldAmount);
+                        if (phase.equals("equipshiftin")) {
+                            ItemStack source = player().getInventory().getItem(0);
+                            check(source == null || source.getType() == Material.AIR,
+                                    "shift-click consumes the player inventory source");
+                        }
+                    });
+                    break;
+                case "equipremove":
+                    later(phase, () -> {
+                        check(npcs.get(1).getOrAddTrait(Equipment.class).get(EquipmentSlot.HAND) == null,
+                                "taking the GUI item clears saved equipment");
+                        ItemStack held = ((Player) npcs.get(1).getEntity()).getItemInHand();
+                        check(held == null || held.getType() == Material.AIR, "taking the GUI item clears the player hand");
+                        check(player().getItemOnCursor().getType() == Material.DIAMOND_SWORD,
+                                "removed item returns to the cursor");
+                    });
+                    break;
+                case "equipappleprepare":
+                    player().setItemOnCursor(new ItemStack(Material.APPLE, 3));
+                    later(phase, () -> {});
+                    break;
+                case "equipprotectedprepare":
+                    player().setItemOnCursor(new ItemStack(Material.DIAMOND_SWORD));
+                    later(phase, () -> {});
+                    break;
+                case "equipprotected":
+                case "equipinvalidarmor":
+                    later(phase, () -> {
+                        checkHand(Material.APPLE, 3);
+                        check(player().getOpenInventory().getItem(0).getType() == Material.DIAMOND_SWORD,
+                                "equipment header remains protected");
+                        check(player().getItemOnCursor().getType() == Material.DIAMOND_SWORD,
+                                "denied click keeps the cursor item");
+                        check(npcs.get(1).getOrAddTrait(Equipment.class).get(EquipmentSlot.BOOTS) == null,
+                                "invalid armor is not saved");
+                    });
+                    break;
+                case "equipshiftprepare":
+                    player().setItemOnCursor(null);
+                    player().getInventory().clear();
+                    player().getInventory().setItem(0, new ItemStack(Material.APPLE, 63));
+                    later(phase, () -> {});
+                    break;
+                case "equipshiftout":
+                    later(phase, () -> {
+                        check(npcs.get(1).getOrAddTrait(Equipment.class).get(EquipmentSlot.HAND) == null,
+                                "shift-click clears equipped hand");
+                        check(player().getInventory().getItem(0).getAmount() == 64
+                                && player().getInventory().getItem(1).getAmount() == 2,
+                                "shift-click returns all items across a partial stack and an empty slot");
+                    });
+                    break;
+                case "equipbootsprepare":
+                    player().setItemOnCursor(new ItemStack(Material.DIAMOND_BOOTS));
+                    later(phase, () -> {});
+                    break;
+                case "equipboots":
+                    later(phase, () -> {
+                        checkHand(Material.APPLE, 33);
+                        ItemStack boots = npcs.get(1).getOrAddTrait(Equipment.class).get(EquipmentSlot.BOOTS);
+                        check(boots != null && boots.getType() == Material.DIAMOND_BOOTS,
+                                "GUI armor click saves valid equipment");
+                        check(player().getOpenInventory().getItem(14).isSimilar(boots), "GUI displays the boots");
+                    });
+                    break;
+                case "equiparmor":
+                    player().setItemOnCursor(null);
+                    player().closeInventory();
+                    Equipment worn = npcs.get(1).getOrAddTrait(Equipment.class);
+                    worn.set(EquipmentSlot.HAND, new ItemStack(Material.DIAMOND_SWORD));
+                    worn.set(EquipmentSlot.BOOTS, new ItemStack(Material.DIAMOND_BOOTS));
+                    worn.set(EquipmentSlot.LEGGINGS, new ItemStack(Material.DIAMOND_LEGGINGS));
+                    worn.set(EquipmentSlot.CHESTPLATE, new ItemStack(Material.DIAMOND_CHESTPLATE));
+                    worn.set(EquipmentSlot.HELMET, new ItemStack(Material.DIAMOND_HELMET));
+                    later(phase, () -> {});
                     break;
                 case "clicks":
                     check(rightClicks == 1 && leftClicks == 1, "one left and one right click, got " + leftClicks + "/" + rightClicks);

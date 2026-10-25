@@ -1,6 +1,7 @@
 package net.citizensnpcs.editor;
 
 import java.util.Map;
+import java.util.function.Function;
 
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Player;
@@ -17,7 +18,6 @@ import com.google.common.collect.Maps;
 
 import net.citizensnpcs.api.CitizensAPI;
 import net.citizensnpcs.api.gui.InventoryMenu;
-import net.citizensnpcs.api.gui.InventoryMenuPage;
 import net.citizensnpcs.api.npc.NPC;
 import net.citizensnpcs.api.util.Messaging;
 import net.citizensnpcs.util.Messages;
@@ -25,6 +25,7 @@ import net.citizensnpcs.util.Util;
 
 public class EquipmentEditor extends Editor {
     private InventoryMenu menu;
+    private EquipmentMenuPage page;
     private final NPC npc;
     private final Player player;
 
@@ -36,10 +37,8 @@ public class EquipmentEditor extends Editor {
     @Override
     public void begin() {
         if (EQUIPPER_GUIS.containsKey(npc.getEntity().getType()) || !EQUIPPERS.containsKey(npc.getEntity().getType())) {
-            Map<String, Object> ctx = Maps.newHashMap();
-            ctx.put("npc", npc);
-            menu = InventoryMenu.createWithContext(
-                    EQUIPPER_GUIS.getOrDefault(npc.getEntity().getType(), GenericEquipperGUI.class), ctx);
+            page = EQUIPPER_GUIS.getOrDefault(npc.getEntity().getType(), GenericEquipperGUI::new).apply(npc);
+            menu = InventoryMenu.create(page);
             menu.present(player);
             return;
         }
@@ -51,6 +50,7 @@ public class EquipmentEditor extends Editor {
         if (menu != null) {
             menu.close();
             menu = null;
+            page = null;
             return;
         }
         Messaging.sendTr(player, Messages.EQUIPMENT_EDITOR_END);
@@ -59,7 +59,7 @@ public class EquipmentEditor extends Editor {
     @EventHandler
     public void onInventoryClick(InventoryClickEvent event) {
         if (menu != null && event.getWhoClicked().equals(player)) {
-            menu.onInventoryClick(event);
+            page.onInventoryClick(event);
         }
     }
 
@@ -95,17 +95,17 @@ public class EquipmentEditor extends Editor {
         event.setCancelled(true);
     }
 
-    private static final Map<EntityType, Class<? extends InventoryMenuPage>> EQUIPPER_GUIS = Maps
+    private static final Map<EntityType, Function<NPC, EquipmentMenuPage>> EQUIPPER_GUIS = Maps
             .newEnumMap(EntityType.class);
     private static final Map<EntityType, Equipper> EQUIPPERS = Maps.newEnumMap(EntityType.class);
 
     static {
-        EQUIPPER_GUIS.put(EntityType.PIG, SteerableEquipperGUI.class);
+        EQUIPPER_GUIS.put(EntityType.PIG, SteerableEquipperGUI::new);
         try {
-            EQUIPPER_GUIS.put(EntityType.valueOf("STRIDER"), SteerableEquipperGUI.class);
+            EQUIPPER_GUIS.put(EntityType.valueOf("STRIDER"), SteerableEquipperGUI::new);
         } catch (IllegalArgumentException ex) {
         }
-        EQUIPPER_GUIS.put(EntityType.ENDERMAN, EndermanEquipperGUI.class);
+        EQUIPPER_GUIS.put(EntityType.ENDERMAN, EndermanEquipperGUI::new);
         EQUIPPERS.put(EntityType.SHEEP, new SheepEquipper());
         EQUIPPERS.put(EntityType.HORSE, new HorseEquipper());
         for (EntityType type : Util.optionalEntitySet("ZOMBIE_HORSE", "LLAMA", "TRADER_LLAMA", "DONKEY", "MULE",

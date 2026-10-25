@@ -8,8 +8,6 @@ import org.bukkit.inventory.ItemStack;
 
 import net.citizensnpcs.api.gui.CitizensInventoryClickEvent;
 import net.citizensnpcs.api.gui.ClickHandler;
-import net.citizensnpcs.api.gui.InjectContext;
-import net.citizensnpcs.api.gui.InventoryMenuPage;
 import net.citizensnpcs.api.gui.InventoryMenuSlot;
 import net.citizensnpcs.api.gui.Menu;
 import net.citizensnpcs.api.gui.MenuContext;
@@ -24,14 +22,17 @@ import net.citizensnpcs.trait.Saddle;
         offset = { 0, 2 },
         slots = { @MenuSlot(pat = 'x', compatMaterial = { "BARRIER", "FIRE" }, title = "<4>Unused") },
         value = "xxx")
-public class SteerableEquipperGUI extends InventoryMenuPage {
-    @InjectContext
-    private NPC npc;
+public class SteerableEquipperGUI extends EquipmentMenuPage {
     @MenuSlot(slot = { 0, 1 })
     private InventoryMenuSlot saddle;
 
+    public SteerableEquipperGUI(NPC npc) {
+        super(npc);
+    }
+
     @Override
     public void initialise(MenuContext ctx) {
+        super.initialise(ctx);
         Saddle trait = npc.getOrAddTrait(Saddle.class);
         if (trait.useSaddle()) {
             saddle.setItemStack(new ItemStack(Material.SADDLE, 1));

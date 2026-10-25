@@ -11,8 +11,6 @@ import org.bukkit.material.MaterialData;
 
 import net.citizensnpcs.api.gui.CitizensInventoryClickEvent;
 import net.citizensnpcs.api.gui.ClickHandler;
-import net.citizensnpcs.api.gui.InjectContext;
-import net.citizensnpcs.api.gui.InventoryMenuPage;
 import net.citizensnpcs.api.gui.InventoryMenuSlot;
 import net.citizensnpcs.api.gui.Menu;
 import net.citizensnpcs.api.gui.MenuContext;
@@ -27,11 +25,13 @@ import net.citizensnpcs.api.util.SpigotUtil;
         offset = { 0, 2 },
         slots = { @MenuSlot(pat = 'x', compatMaterial = { "BARRIER", "FIRE" }, title = "<4>Unused") },
         value = "xxx")
-public class EndermanEquipperGUI extends InventoryMenuPage {
+public class EndermanEquipperGUI extends EquipmentMenuPage {
     @MenuSlot(slot = { 0, 1 })
     private InventoryMenuSlot hand;
-    @InjectContext
-    private NPC npc;
+
+    public EndermanEquipperGUI(NPC npc) {
+        super(npc);
+    }
 
     @SuppressWarnings("deprecation")
     private Material getCarriedMaterial() {
@@ -46,6 +46,7 @@ public class EndermanEquipperGUI extends InventoryMenuPage {
 
     @Override
     public void initialise(MenuContext ctx) {
+        super.initialise(ctx);
         Material mat = getCarriedMaterial();
         if (mat == null)
             return;

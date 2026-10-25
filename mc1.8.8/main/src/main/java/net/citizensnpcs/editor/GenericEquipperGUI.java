@@ -9,8 +9,6 @@ import org.bukkit.inventory.ItemStack;
 
 import net.citizensnpcs.api.gui.CitizensInventoryClickEvent;
 import net.citizensnpcs.api.gui.ClickHandler;
-import net.citizensnpcs.api.gui.InjectContext;
-import net.citizensnpcs.api.gui.InventoryMenuPage;
 import net.citizensnpcs.api.gui.InventoryMenuSlot;
 import net.citizensnpcs.api.gui.Menu;
 import net.citizensnpcs.api.gui.MenuContext;
@@ -35,7 +33,7 @@ import net.citizensnpcs.api.trait.trait.Equipment.EquipmentSlot;
         offset = { 0, 6 },
         slots = { @MenuSlot(pat = 'x', compatMaterial = { "BARRIER", "FIRE" }, title = "<4>Unused") },
         value = "xxx\nxxx")
-public class GenericEquipperGUI extends InventoryMenuPage {
+public class GenericEquipperGUI extends EquipmentMenuPage {
     @MenuSlot(slot = { 1, 5 })
     private InventoryMenuSlot boots;
     @MenuSlot(slot = { 1, 3 })
@@ -46,13 +44,16 @@ public class GenericEquipperGUI extends InventoryMenuPage {
     private InventoryMenuSlot helmet;
     @MenuSlot(slot = { 1, 4 })
     private InventoryMenuSlot leggings;
-    @InjectContext
-    private NPC npc;
     @MenuSlot(slot = { 1, 1 })
     private InventoryMenuSlot offhand;
 
+    public GenericEquipperGUI(NPC npc) {
+        super(npc);
+    }
+
     @Override
     public void initialise(MenuContext ctx) {
+        super.initialise(ctx);
         Equipment trait = npc.getOrAddTrait(Equipment.class);
         hand.setItemStack(trait.get(EquipmentSlot.HAND));
         helmet.setItemStack(trait.get(EquipmentSlot.HELMET));

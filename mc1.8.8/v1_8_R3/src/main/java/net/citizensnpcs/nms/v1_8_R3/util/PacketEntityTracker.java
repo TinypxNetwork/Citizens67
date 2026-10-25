@@ -85,9 +85,10 @@ public final class PacketEntityTracker implements ViewerTracker {
         send(player, new PacketPlayOutEntityMetadata(handle.getId(), handle.getDataWatcher(), true));
         sendPosition(player, false, true);
         if (handle instanceof EntityLiving) {
-            ItemStack[] items = ((EntityLiving) handle).getEquipment();
-            for (int slot = 0; slot < items.length; slot++) {
-                send(player, new PacketPlayOutEntityEquipment(handle.getId(), slot, items[slot]));
+            // EntityHuman.getEquipment() returns only armor; indexed access includes the hand.
+            for (int slot = 0; slot < 5; slot++) {
+                send(player, new PacketPlayOutEntityEquipment(handle.getId(), slot,
+                        ((EntityLiving) handle).getEquipment(slot)));
             }
         }
     }
@@ -105,11 +106,11 @@ public final class PacketEntityTracker implements ViewerTracker {
             aggregator.send(new PacketPlayOutEntityMetadata(handle.getId(), handle.getDataWatcher(), false));
         }
         if (handle instanceof EntityLiving) {
-            ItemStack[] items = ((EntityLiving) handle).getEquipment();
-            for (int slot = 0; slot < items.length; slot++) {
-                if (!ItemStack.matches(equipment.get(slot), items[slot])) {
-                    equipment.put(slot, items[slot] == null ? null : items[slot].cloneItemStack());
-                    aggregator.send(new PacketPlayOutEntityEquipment(handle.getId(), slot, items[slot]));
+            for (int slot = 0; slot < 5; slot++) {
+                ItemStack item = ((EntityLiving) handle).getEquipment(slot);
+                if (!ItemStack.matches(equipment.get(slot), item)) {
+                    equipment.put(slot, item == null ? null : item.cloneItemStack());
+                    aggregator.send(new PacketPlayOutEntityEquipment(handle.getId(), slot, item));
                 }
             }
         }
