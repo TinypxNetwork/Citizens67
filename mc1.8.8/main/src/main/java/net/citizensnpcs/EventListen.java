@@ -468,10 +468,15 @@ public class EventListen implements Listener {
         NPC npc = event.getNPC();
         if (npc.getEntity() instanceof SkinnableEntity) {
             SkinnableEntity skinnable = (SkinnableEntity) npc.getEntity();
-            if (skinnable.getSkinTracker().getSkin() != null) {
-                skinnable.getSkinTracker().getSkin().apply(skinnable);
+            if (npc.hasTrait(PacketNPC.class)) {
+                // Cancel old player-info removals before adding the replacement's skin and spawning it.
+                skinnable.getSkinTracker().updateViewer(event.getPlayer());
+            } else {
+                if (skinnable.getSkinTracker().getSkin() != null) {
+                    skinnable.getSkinTracker().getSkin().apply(skinnable);
+                }
+                onNPCPlayerLinkToPlayer(event);
             }
-            onNPCPlayerLinkToPlayer(event);
         }
         if (npc.data().has(NPC.Metadata.HOLOGRAM_RENDERER)) {
             HologramRenderer hr = npc.data().get(NPC.Metadata.HOLOGRAM_RENDERER);

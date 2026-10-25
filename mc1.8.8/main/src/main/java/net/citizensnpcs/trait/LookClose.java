@@ -39,6 +39,10 @@ import net.citizensnpcs.util.Util;
 public class LookClose extends Trait implements Toggleable {
     @Persist("disablewhilenavigating")
     private boolean disableWhileNavigating = Setting.DISABLE_LOOKCLOSE_WHILE_NAVIGATING.asBoolean();
+    @Persist
+    private Float defaultPitch;
+    @Persist
+    private Float defaultYaw;
     @Persist("enabled")
     private boolean enabled = Setting.DEFAULT_LOOK_CLOSE.asBoolean();
     @Persist
@@ -94,7 +98,7 @@ public class LookClose extends Trait implements Toggleable {
      * Finds a new look-close target
      */
     public void findNewTarget() {
-        if (perPlayer) {
+        if (perPlayer && !npc.hasTrait(PacketNPC.class)) {
             lookingAt = null;
             RotationTrait rotationTrait = npc.getOrAddTrait(RotationTrait.class);
             Set<UUID> seen = Sets.newHashSet();
@@ -172,13 +176,13 @@ public class LookClose extends Trait implements Toggleable {
                         .map(e -> (Player) e).collect(Collectors.toList())
                 : CitizensAPI.getLocationLookup().getNearbyPlayers(npcLoc, range);
         for (Player player : nearby) {
-            if (player == lookingAt || player.getWorld() != npc.getEntity().getWorld())
+            if (player.getWorld() != npc.getEntity().getWorld())
                 continue;
 
             if (!targetNPCs && CitizensAPI.getNPCRegistry().getNPC(player) != null)
                 continue;
 
-            if (isInvisible(player))
+            if (!isValid(player))
                 continue;
 
             options.add(player);
@@ -214,6 +218,12 @@ public class LookClose extends Trait implements Toggleable {
         return headOnly;
     }
 
+    /** Packet NPC viewers in range each see the NPC looking at themselves. */
+    public boolean isLookingAtViewer(Player player) {
+        return enabled && npc.isSpawned()
+                && !(npc.getNavigator().isNavigating() && disableWhileNavigating) && isValid(player);
+    }
+
     private boolean isInvisible(Player player) {
         return player.getGameMode() == GameMode.SPECTATOR || player.hasPotionEffect(PotionEffectType.INVISIBILITY)
                 || isPluginVanished(player) || !canSee(player);
@@ -238,18 +248,40 @@ public class LookClose extends Trait implements Toggleable {
 
     @Override
     public void load(DataKey key) {
-        range = key.getDouble("range");
+        range = key.getDouble("range", range);
     }
 
     /**
      * Enables/disables the trait
      */
     public void lookClose(boolean lookClose) {
+        if (lookClose && !enabled && npc.isSpawned()) {
+            rememberDirection();
+        }
         enabled = lookClose;
+    }
+
+    private void rememberDirection() {
+        defaultYaw = NMS.getHeadYaw(npc.getEntity());
+        defaultPitch = npc.getEntity().getLocation().getPitch();
+    }
+
+    @Override
+    public void onSpawn() {
+        if (defaultYaw == null || defaultPitch == null) {
+            rememberDirection();
+        }
     }
 
     @Override
     public void onDespawn() {
+        RotationTrait rotation = npc.getTraitNullable(RotationTrait.class);
+        if (rotation != null) {
+            for (UUID uuid : sessions.keySet()) {
+                rotation.resetPlayerToPhysicalSession(uuid);
+            }
+        }
+        sessions.clear();
         NPCLookCloseChangeTargetEvent event = new NPCLookCloseChangeTargetEvent(npc, lookingAt, null);
         Bukkit.getPluginManager().callEvent(event);
         if (event.getNewTarget() != null && isValid(event.getNewTarget())) {
@@ -282,6 +314,9 @@ public class LookClose extends Trait implements Toggleable {
         t--;
 
         if (!enabled || npc.getNavigator().isNavigating() && disableWhileNavigating()) {
+            if (lookingAt != null || !sessions.isEmpty()) {
+                resetDirection();
+            }
             lookingAt = null;
             return;
         }
@@ -290,8 +325,12 @@ public class LookClose extends Trait implements Toggleable {
         if (npc.getNavigator().isNavigating() || npc.getNavigator().isPaused()) {
             npc.getNavigator().setPaused(lookingAt != null);
         }
-        if (lookingAt == null)
+        if (lookingAt == null) {
+            if (npc.hasTrait(PacketNPC.class) && !enableRandomLook) {
+                resetDirection();
+            }
             return;
+        }
 
         RotationTrait rot = npc.getOrAddTrait(RotationTrait.class);
         rot.getGlobalParameters().headOnly(headOnly);
@@ -305,6 +344,17 @@ public class LookClose extends Trait implements Toggleable {
                     100 - 4 * (int) Math.floor(npc.getStoredLocation().distanceSquared(lookingAt.getLocation())));
             npc.getEntity().setSilent(wasSilent);
         }
+    }
+
+    private void resetDirection() {
+        if (defaultYaw == null || defaultPitch == null)
+            return;
+        RotationTrait rotation = npc.getOrAddTrait(RotationTrait.class);
+        for (UUID uuid : sessions.keySet()) {
+            rotation.resetPlayerToPhysicalSession(uuid);
+        }
+        sessions.clear();
+        rotation.getPhysicalSession().rotateToHave(defaultYaw, defaultPitch);
     }
 
     @Override
@@ -378,7 +428,7 @@ public class LookClose extends Trait implements Toggleable {
 
     @Override
     public boolean toggle() {
-        enabled = !enabled;
+        lookClose(!enabled);
         return enabled;
     }
 

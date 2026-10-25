@@ -13,6 +13,7 @@ import javax.annotation.Nullable;
 
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
+import org.bukkit.Location;
 import org.bukkit.scheduler.BukkitTask;
 
 import com.mojang.authlib.GameProfile;
@@ -77,12 +78,15 @@ public class Skin {
         Objects.requireNonNull(entity);
 
         NPC npc = entity.getNPC();
+        if (!skinName.equalsIgnoreCase(entity.getSkinName()))
+            return false;
         SkinTrait skinTrait = npc.getOrAddTrait(SkinTrait.class);
         // Use npc cached skin if available.
         // If npc requires latest skin, cache is used for faster availability until the latest skin can be loaded.
         String cachedName = npc.data().get(CACHED_SKIN_UUID_NAME_METADATA);
         String texture = skinTrait.getTexture();
-        if (skinName.equals(cachedName) && texture != null && !texture.equals("cache")) {
+        if ((skinName.equals(cachedName) || !skinTrait.shouldUpdateSkins())
+                && texture != null && !texture.equals("cache")) {
             setNPCTexture(entity, new SkinProperty("textures", texture, skinTrait.getSignature()));
 
             // check if NPC prefers to use cached skin over the latest skin.
@@ -122,17 +126,21 @@ public class Skin {
     public void applyAndRespawn(SkinnableEntity entity) {
         Objects.requireNonNull(entity);
 
+        NPC npc = entity.getNPC();
+        if (!npc.isSpawned() || npc.getEntity() != entity.getBukkitEntity())
+            return;
+
         if (!apply(entity))
             return;
 
-        NPC npc = entity.getNPC();
-
-        if (!npc.isSpawned())
-            return;
-
         Bukkit.getServer().getScheduler().scheduleSyncDelayedTask(CitizensAPI.getPlugin(), () -> {
-            npc.despawn(DespawnReason.PENDING_RESPAWN);
-            npc.spawn(npc.getStoredLocation(), SpawnReason.RESPAWN);
+            if (!npc.isSpawned() || npc.getEntity() != entity.getBukkitEntity()
+                    || !skinName.equalsIgnoreCase(entity.getSkinName()))
+                return;
+            Location at = npc.getStoredLocation();
+            if (npc.despawn(DespawnReason.PENDING_RESPAWN)) {
+                npc.spawn(at, SpawnReason.RESPAWN);
+            }
         });
     }
 

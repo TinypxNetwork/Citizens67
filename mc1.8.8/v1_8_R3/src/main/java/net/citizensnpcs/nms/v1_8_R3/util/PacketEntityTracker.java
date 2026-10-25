@@ -9,6 +9,8 @@ import java.util.UUID;
 import java.util.function.Consumer;
 
 import org.bukkit.Bukkit;
+import org.bukkit.Location;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 
 import net.citizensnpcs.api.event.NPCLinkToPlayerEvent;
@@ -16,6 +18,7 @@ import net.citizensnpcs.api.event.NPCSeenByPlayerEvent;
 import net.citizensnpcs.api.event.NPCUnlinkFromPlayerEvent;
 import net.citizensnpcs.api.npc.NPC;
 import net.citizensnpcs.npc.ai.NPCHolder;
+import net.citizensnpcs.trait.LookClose;
 import net.citizensnpcs.trait.PacketNPC.ViewerTracker;
 import net.citizensnpcs.util.EntityPacketTracker.PacketAggregator;
 import net.citizensnpcs.util.NMS;
@@ -27,6 +30,7 @@ import net.minecraft.server.v1_8_R3.ItemStack;
 import net.minecraft.server.v1_8_R3.Packet;
 import net.minecraft.server.v1_8_R3.PacketPlayOutEntityDestroy;
 import net.minecraft.server.v1_8_R3.PacketPlayOutEntityEquipment;
+import net.minecraft.server.v1_8_R3.PacketPlayOutEntity.PacketPlayOutEntityLook;
 import net.minecraft.server.v1_8_R3.PacketPlayOutEntityHeadRotation;
 import net.minecraft.server.v1_8_R3.PacketPlayOutEntityMetadata;
 import net.minecraft.server.v1_8_R3.PacketPlayOutEntityTeleport;
@@ -41,8 +45,9 @@ public final class PacketEntityTracker implements ViewerTracker {
     private final Entity handle;
     private final Map<UUID, Player> linked = new LinkedHashMap<>();
     private final NPC npc;
+    private final Map<UUID, byte[]> rotations = new HashMap<>();
     private final EntityTrackerEntry spawnEncoder;
-    private int x, y, z, yaw, pitch, headYaw;
+    private int x, y, z;
 
     public PacketEntityTracker(org.bukkit.entity.Entity entity, PacketAggregator aggregator) {
         this.aggregator = aggregator;
@@ -78,7 +83,7 @@ public final class PacketEntityTracker implements ViewerTracker {
             throw new IllegalStateException("Unable to encode packet NPC " + npc.getId(), ex);
         }
         send(player, new PacketPlayOutEntityMetadata(handle.getId(), handle.getDataWatcher(), true));
-        send(player, new PacketPlayOutEntityHeadRotation(handle, angle(NMS.getHeadYaw(handle.getBukkitEntity()))));
+        sendPosition(player, false, true);
         if (handle instanceof EntityLiving) {
             ItemStack[] items = ((EntityLiving) handle).getEquipment();
             for (int slot = 0; slot < items.length; slot++) {
@@ -91,13 +96,9 @@ public final class PacketEntityTracker implements ViewerTracker {
     public void run() {
         if (linked.isEmpty())
             return;
-        if (x != position(handle.locX) || y != position(handle.locY) || z != position(handle.locZ)
-                || yaw != angle(handle.yaw) || pitch != angle(handle.pitch)) {
-            aggregator.send(new PacketPlayOutEntityTeleport(handle));
-        }
-        int newHeadYaw = angle(NMS.getHeadYaw(handle.getBukkitEntity()));
-        if (headYaw != newHeadYaw) {
-            aggregator.send(new PacketPlayOutEntityHeadRotation(handle, (byte) newHeadYaw));
+        boolean moved = x != position(handle.locX) || y != position(handle.locY) || z != position(handle.locZ);
+        for (Player player : linked.values()) {
+            sendPosition(player, moved, false);
         }
         savePosition();
         if (handle.getDataWatcher().a()) {
@@ -114,10 +115,48 @@ public final class PacketEntityTracker implements ViewerTracker {
         }
     }
 
+    private void sendPosition(Player player, boolean moved, boolean force) {
+        float bodyYaw = handle.yaw;
+        float pitch = handle.pitch;
+        float headYaw = NMS.getHeadYaw(handle.getBukkitEntity());
+        LookClose look = npc.getTraitNullable(LookClose.class);
+        if (look != null && look.isLookingAtViewer(player)) {
+            Location from = handle.getBukkitEntity() instanceof LivingEntity
+                    ? ((LivingEntity) handle.getBukkitEntity()).getEyeLocation() : handle.getBukkitEntity().getLocation();
+            Location target = player.getEyeLocation();
+            double dx = target.getX() - from.getX();
+            double dy = target.getY() - from.getY();
+            double dz = target.getZ() - from.getZ();
+            headYaw = (float) Math.toDegrees(Math.atan2(dz, dx)) - 90F;
+            pitch = (float) -Math.toDegrees(Math.atan2(dy, Math.sqrt(dx * dx + dz * dz)));
+            if (!look.isHeadOnly()) {
+                bodyYaw = headYaw;
+            }
+        }
+        byte nextYaw = angle(bodyYaw), nextPitch = angle(pitch), nextHeadYaw = angle(headYaw);
+        byte[] previous = rotations.get(player.getUniqueId());
+        if (moved) {
+            send(player, new PacketPlayOutEntityTeleport(handle.getId(), position(handle.locX), position(handle.locY),
+                    position(handle.locZ), nextYaw, nextPitch, handle.onGround));
+        } else if (force || previous == null || previous[0] != nextYaw || previous[1] != nextPitch) {
+            send(player, new PacketPlayOutEntityLook(handle.getId(), nextYaw, nextPitch, handle.onGround));
+        }
+        if (force || previous == null || previous[2] != nextHeadYaw) {
+            send(player, new PacketPlayOutEntityHeadRotation(handle, nextHeadYaw));
+        }
+        if (previous == null) {
+            rotations.put(player.getUniqueId(), previous = new byte[3]);
+        }
+        previous[0] = nextYaw;
+        previous[1] = nextPitch;
+        previous[2] = nextHeadYaw;
+    }
+
     @Override
     public void unlink(Player player) {
         if (linked.remove(player.getUniqueId()) == null)
             return;
+        rotations.remove(player.getUniqueId());
         aggregator.removeConnection(player.getUniqueId());
         if (player.isOnline()) {
             send(player, new PacketPlayOutEntityDestroy(handle.getId()));
@@ -142,9 +181,6 @@ public final class PacketEntityTracker implements ViewerTracker {
         x = position(handle.locX);
         y = position(handle.locY);
         z = position(handle.locZ);
-        yaw = angle(handle.yaw);
-        pitch = angle(handle.pitch);
-        headYaw = angle(NMS.getHeadYaw(handle.getBukkitEntity()));
     }
 
     private static byte angle(float degrees) {

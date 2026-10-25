@@ -3,6 +3,7 @@
 No Minecraft client library or ProtocolLib is required. The run directory must be new.
 """
 import argparse
+import base64
 from collections import Counter
 import io
 import json
@@ -69,7 +70,7 @@ def has_dark_gray(component):
 
 
 class Client:
-    def __init__(self, port):
+    def __init__(self, port, name="PacketTest"):
         self.sock = socket.create_connection(("127.0.0.1", port), timeout=10)
         self.sock.settimeout(None)
         self.stream = self.sock.makefile("rb")
@@ -78,8 +79,9 @@ class Client:
         self.closed = False
         self.error = None
         self.packets = []
+        self.timed_packets = []
         self.send(0, vint(47) + string("localhost") + struct.pack(">H", port) + vint(2))
-        self.send(0, string("PacketTest"))
+        self.send(0, string(name))
         self.thread = threading.Thread(target=self.receive, daemon=True)
         self.thread.start()
 
@@ -109,6 +111,7 @@ class Client:
                     elif packet_id == 0:
                         raise AssertionError("login disconnect: " + repr(body))
                     continue
+                self.timed_packets.append((time.monotonic(), packet_id, body))
                 self.packets.append((packet_id, body))
                 if packet_id == 1:
                     self.send(0x15, string("en_US") + b"\x04\x00\x01\x7f")
@@ -159,11 +162,12 @@ class Client:
                 entry = {"uuid": str(uuid.UUID(bytes=stream.read(16))), "action": action}
                 if action == 0:
                     entry["profile"] = read_string(stream)
+                    entry["properties"] = {}
                     for _ in range(read_vint(stream)):
-                        read_string(stream)
-                        read_string(stream)
-                        if stream.read(1) == b"\x01":
-                            read_string(stream)
+                        name = read_string(stream)
+                        value = read_string(stream)
+                        signature = read_string(stream) if stream.read(1) == b"\x01" else None
+                        entry["properties"][name] = {"value": value, "signature": signature}
                     read_vint(stream)  # game mode
                     read_vint(stream)  # latency
                 elif action in (1, 2):
@@ -185,6 +189,54 @@ class Client:
             assert re.fullmatch(r"\[NPC\] [a-z0-9]{10}", text), "exactly 10 lowercase letters/digits in Tab"
             assert has_dark_gray(display), "Tab entry uses the &8 dark-gray color"
             assert text == expected[entry["uuid"]][2:], "NPC keeps its saved random Tab alias"
+
+    def check_skin(self, skin_uuid, texture_hash, packets=None):
+        entries = [entry for entry in self.player_info(packets)
+                   if entry["uuid"] == skin_uuid and entry["action"] == 0]
+        assert entries, "skin refresh sends the player-info entry"
+        for entry in entries:
+            skin = entry["properties"]["textures"]
+            assert skin["signature"] == "packet-test-signature", "skin signature preserved"
+            texture = json.loads(base64.b64decode(skin["value"]))
+            assert texture["textures"]["SKIN"]["url"].endswith(texture_hash), "saved texture sent to client"
+
+    def check_rotation(self, entity_id, yaw, pitch):
+        rotation = {}
+        for kind, body in self.packets:
+            if kind not in (0x0C, 0x16, 0x17, 0x18, 0x19):
+                continue
+            stream = io.BytesIO(body)
+            if read_vint(stream) != entity_id:
+                continue
+            if kind == 0x19:
+                rotation["head"] = stream.read(1)[0] * 360 / 256
+                continue
+            if kind == 0x0C:
+                stream.read(28)  # UUID and fixed-point XYZ
+            elif kind == 0x18:
+                stream.read(12)
+            elif kind == 0x17:
+                stream.read(3)
+            rotation["body"], rotation["pitch"] = (value * 360 / 256 for value in stream.read(2))
+        for name, expected in (("head", yaw), ("body", yaw), ("pitch", pitch)):
+            assert name in rotation, f"client received NPC {name} rotation"
+            difference = abs((rotation[name] - expected + 180) % 360 - 180)
+            assert difference < 3, f"NPC {name} is {rotation[name]:.2f}, expected {expected:.2f}"
+
+    def check_skin_delay(self, skin_uuid, packets):
+        added_at = None
+        removed = False
+        for received_at, kind, body in packets:
+            for entry in self.player_info([(kind, body)]):
+                if entry["uuid"] != skin_uuid:
+                    continue
+                if entry["action"] == 0:
+                    added_at = received_at
+                elif entry["action"] == 4 and added_at is not None:
+                    assert received_at - added_at >= 0.8, "skin entry kept long enough for the client to load its texture"
+                    removed = True
+                    added_at = None
+        assert removed, "temporary skin Tab entry is eventually removed"
 
 
 def main():
@@ -245,13 +297,15 @@ def main():
 
     threading.Thread(target=read_log, daemon=True).start()
     client = None
+    extra_clients = []
     phases = []
 
     def until(predicate, description, timeout=40):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if client and client.error:
-                raise AssertionError(f"client error: {client.error}")
+            for connection in ([client] if client else []) + extra_clients:
+                if connection.error:
+                    raise AssertionError(f"client error: {connection.error}")
             if process.poll() is not None:
                 raise AssertionError("server exited: " + "".join(log_lines[-20:]))
             if predicate():
@@ -267,6 +321,7 @@ def main():
         until(lambda: any("[PACKET-TEST]" in line and ("PASS" in line or "FAIL" in line)
                           for line in log_lines[start:]), name)
         assert not any("FAIL" in line for line in log_lines[start:]), "".join(log_lines[start:])
+        assert not any("Player registered twice" in line for line in log_lines[start:]), "".join(log_lines[start:])
         state = json.loads((run_dir / "packet-test-state.json").read_text(encoding="utf-8"))
         phases.append(name)
         return state, client.packets[packet_start:]
@@ -281,6 +336,7 @@ def main():
         assert client.contains("\u00a78[NPC] Steve"), "player profile display name"
         assert client.contains("\u00a78[NPC] LongMerchantName123"), "long name rendered in hologram metadata"
         tab_names = state["tab_names"]
+        skin_uuid = next(iter(tab_names))
         assert len(set(tab_names.values())) == len(tab_names), "NPCs have independent random aliases"
         client.check_tab_names(tab_names)
         real_player = [entry for entry in client.player_info() if entry.get("profile") == "PacketTest"]
@@ -298,6 +354,19 @@ def main():
         assert state["tab_names"] == tab_names, "Tab refresh does not regenerate random aliases"
         client.check_tab_names(tab_names, packets)
         client.check_tab_names(tab_names, packets, action=3)
+        for skin_phase, texture_hash in (("skin", "a" * 64), ("skinagain", "b" * 64)):
+            old_id = state["ids"][1]
+            state, packets = phase(skin_phase)
+            assert old_id in client.destroyed(packets), "previous skin entity removed from client"
+            assert state["ids"][1] != old_id and state["ids"][1] in client.spawned(packets), "new skin entity spawned"
+            assert state["tab_names"] == tab_names, "skin changes preserve saved Tab aliases"
+            client.check_skin(skin_uuid, texture_hash, packets)
+            client.check_tab_names({skin_uuid: tab_names[skin_uuid]}, packets)
+        phase("reregister")
+        skin_refresh_start = len(client.timed_packets)
+        _, packets = phase("skinrefresh")
+        client.check_skin(skin_uuid, "b" * 64, packets)
+        client.check_skin_delay(skin_uuid, client.timed_packets[skin_refresh_start:])
         phase("select")
         # INTERACT_AT plus INTERACT must produce only one right click.
         client.send(2, vint(state["ids"][0]) + vint(2) + struct.pack(">fff", 0, 1, 0))
@@ -317,6 +386,7 @@ def main():
         state, packets = phase("near")
         assert set(state["ids"] + state["holograms"]) <= client.spawned(packets), "in-range respawns"
         client.check_tab_names(tab_names, packets)
+        client.check_skin(skin_uuid, "b" * 64, packets)
         state, packets = phase("world")
         assert set(state["ids"]) <= client.destroyed(packets), "world change destroys"
         state, packets = phase("near")
@@ -333,6 +403,7 @@ def main():
         assert client.contains("\u00a78[NPC] Dealer", packets), "prefix survives reload"
         assert state["tab_names"] == tab_names, "saved random aliases survive disk reload"
         client.check_tab_names(tab_names, packets)
+        client.check_skin(skin_uuid, "b" * 64, packets)
         client.close()
         until(lambda: any("PacketTest left" in line for line in log_lines), "disconnect")
         client = Client(args.port)
@@ -340,10 +411,45 @@ def main():
         state, packets = phase("reconnect")
         assert set(state["ids"] + state["holograms"]) <= client.spawned(), "reconnect restores all NPCs"
         client.check_tab_names(tab_names)
+        client.check_skin(skin_uuid, "b" * 64)
+        extra_clients = [Client(args.port, "LookEast"), Client(args.port, "LookObserver")]
+        until(lambda: all(connection.play for connection in extra_clients)
+              and all(any(name + "[/" in line and "logged in with entity id" in line for line in log_lines)
+                      for name in ("LookEast", "LookObserver")), "lookclose clients login")
+        state, _ = phase("looksetup")
+        look_id = state["ids"][1]
+        client.check_rotation(look_id, 0, 0)
+        extra_clients[0].check_rotation(look_id, -90, 0)
+        extra_clients[1].check_rotation(look_id, 0, 0)
+        phase("lookoutside")
+        for connection in [client] + extra_clients:
+            connection.check_rotation(look_id, -90, 0)
+        state, packets = phase("lookrefresh")
+        look_id = state["ids"][1]
+        client.check_skin(skin_uuid, "b" * 64, packets)
+        for connection in [client] + extra_clients:
+            connection.check_rotation(look_id, -90, 0)
+        phase("save")
+        state, packets = phase("reload")
+        look_id = state["ids"][1]
+        client.check_skin(skin_uuid, "b" * 64, packets)
+        phase("lookempty")
+        for connection in [client] + extra_clients:
+            connection.check_rotation(look_id, 37, 13)
+        phase("lookreturn")
+        client.check_rotation(look_id, 0, 0)
+        extra_clients[0].check_rotation(look_id, -90, 0)
+        extra_clients[1].check_rotation(look_id, 0, 0)
+        phase("lookdisable")
+        for connection in [client] + extra_clients:
+            connection.check_rotation(look_id, 37, 13)
+        for connection in extra_clients:
+            connection.close()
+        extra_clients.clear()
         time.sleep(1)
         before = len(client.packets)
         time.sleep(1)
-        idle = Counter(kind for kind, _ in client.packets[before:] if kind in (4, 0x18, 0x19, 0x1C))
+        idle = Counter(kind for kind, _ in client.packets[before:] if kind in (4, 0x16, 0x18, 0x19, 0x1C))
         assert not idle, f"stationary NPCs must not resend unchanged state: {idle}"
         all_ids = state["ids"] + state["holograms"]
         _, packets = phase("cleanup")
@@ -357,6 +463,8 @@ def main():
     finally:
         if client:
             client.close()
+        for connection in extra_clients:
+            connection.close()
         if process.poll() is None:
             process.stdin.write("stop\n")
             process.stdin.flush()

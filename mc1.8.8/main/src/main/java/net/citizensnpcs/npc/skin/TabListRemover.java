@@ -65,8 +65,14 @@ public class TabListRemover {
         if (entry == null)
             return;
 
-        if (entry.toRemove.remove(skinnable)) {
-            skinnable.getSkinTracker().notifyRemovePacketCancelled(player.getUniqueId());
+        UUID entityId = skinnable.getBukkitEntity().getUniqueId();
+        for (Iterator<SkinnableEntity> iterator = entry.toRemove.iterator(); iterator.hasNext();) {
+            SkinnableEntity pending = iterator.next();
+            // Old and replacement backing objects have the same client-side player-info entry.
+            if (pending.getBukkitEntity().getUniqueId().equals(entityId)) {
+                iterator.remove();
+                pending.getSkinTracker().notifyRemovePacketCancelled(player.getUniqueId());
+            }
         }
         if (entry.toRemove.isEmpty()) {
             pending.remove(player.getUniqueId());

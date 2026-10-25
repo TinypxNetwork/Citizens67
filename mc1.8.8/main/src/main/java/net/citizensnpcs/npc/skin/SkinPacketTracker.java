@@ -16,6 +16,7 @@ import org.bukkit.scheduler.BukkitTask;
 
 import net.citizensnpcs.Settings.Setting;
 import net.citizensnpcs.api.CitizensAPI;
+import net.citizensnpcs.trait.PacketNPC;
 import net.citizensnpcs.util.NMS;
 
 /**
@@ -64,7 +65,10 @@ public class SkinPacketTracker {
      *            The ID of the player.
      */
     void notifyRemovePacketCancelled(UUID playerId) {
-        inProgress.remove(playerId);
+        PlayerEntry entry = inProgress.remove(playerId);
+        if (entry != null) {
+            entry.cancel();
+        }
     }
 
     /**
@@ -74,16 +78,7 @@ public class SkinPacketTracker {
      *            The ID of the player.
      */
     void notifyRemovePacketSent(UUID playerId) {
-        PlayerEntry entry = inProgress.get(playerId);
-        if (entry == null || entry.removeCount == 0)
-            return;
-
-        entry.removeCount -= 1;
-        if (entry.removeCount == 0) {
-            inProgress.remove(playerId);
-        } else {
-            scheduleRemovePacket(entry);
-        }
+        inProgress.remove(playerId);
     }
 
     /**
@@ -103,6 +98,10 @@ public class SkinPacketTracker {
      */
     public void onRemoveNPC() {
         isRemoved = true;
+        for (PlayerEntry entry : inProgress.values()) {
+            entry.cancel();
+        }
+        inProgress.clear();
 
         Collection<? extends Player> players = Bukkit.getOnlinePlayers();
 
@@ -124,7 +123,8 @@ public class SkinPacketTracker {
         new BukkitRunnable() {
             @Override
             public void run() {
-                if (!entity.getNPC().isSpawned())
+                if (isRemoved || !entity.getNPC().isSpawned()
+                        || entity.getNPC().getEntity() != entity.getBukkitEntity())
                     return;
 
                 double viewDistance = Setting.NPC_SKIN_VIEW_DISTANCE.asDouble();
@@ -138,13 +138,13 @@ public class SkinPacketTracker {
                 || !entity.getNPC().shouldRemoveFromTabList())
             return;
 
+        int delay = Setting.TABLIST_REMOVE_PACKET_DELAY.asTicks();
+        if (entity.getNPC().hasTrait(PacketNPC.class)) {
+            // 1.8 clients need time to load the texture before their player-info entry is removed.
+            delay = Math.max(20, delay);
+        }
         entry.removeTask = Bukkit.getScheduler().runTaskLater(CitizensAPI.getPlugin(),
-                () -> TAB_LIST_REMOVER.sendPacket(entry.player, entity), PACKET_DELAY_REMOVE);
-    }
-
-    private void scheduleRemovePacket(PlayerEntry entry, int count) {
-        entry.removeCount = count;
-        scheduleRemovePacket(entry);
+                () -> TAB_LIST_REMOVER.sendPacket(entry.player, entity), delay);
     }
 
     /**
@@ -172,7 +172,7 @@ public class SkinPacketTracker {
     public void updateViewer(Player player) {
         Objects.requireNonNull(player);
 
-        if (isRemoved || player.hasMetadata("NPC"))
+        if (isRemoved || entity.getNPC().getEntity() != entity.getBukkitEntity() || player.hasMetadata("NPC"))
             return;
 
         PlayerEntry entry = inProgress.get(player.getUniqueId());
@@ -184,15 +184,15 @@ public class SkinPacketTracker {
         TAB_LIST_REMOVER.cancelPackets(player, entity);
 
         inProgress.put(player.getUniqueId(), entry);
+        skin = Skin.get(entity);
         skin.apply(entity);
         if (NMS.sendTabListAdd(player, entity.getBukkitEntity())) {
-            scheduleRemovePacket(entry, Setting.TABLIST_REMOVE_PACKET_DELAY.asTicks());
+            scheduleRemovePacket(entry);
         }
     }
 
     private static class PlayerEntry {
         Player player;
-        int removeCount;
         BukkitTask removeTask;
 
         PlayerEntry(Player player) {
@@ -205,7 +205,6 @@ public class SkinPacketTracker {
             if (removeTask != null) {
                 removeTask.cancel();
             }
-            removeCount = 0;
         }
     }
 
@@ -219,6 +218,5 @@ public class SkinPacketTracker {
     }
 
     private static PlayerListener LISTENER;
-    private static int PACKET_DELAY_REMOVE = 2;
     private static TabListRemover TAB_LIST_REMOVER = new TabListRemover();
 }

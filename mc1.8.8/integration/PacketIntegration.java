@@ -4,6 +4,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Collections;
 import java.util.List;
 
@@ -33,6 +34,8 @@ import net.citizensnpcs.api.event.NPCRightClickEvent;
 import net.citizensnpcs.api.event.NPCSeenByPlayerEvent;
 import net.citizensnpcs.api.event.NPCSelectEvent;
 import net.citizensnpcs.api.event.NPCSpawnEvent;
+import net.citizensnpcs.api.event.DespawnReason;
+import net.citizensnpcs.api.event.SpawnReason;
 import net.citizensnpcs.api.npc.NPC;
 import net.citizensnpcs.api.npc.MemoryNPCDataStore;
 import net.citizensnpcs.api.npc.NPCRegistry;
@@ -40,10 +43,13 @@ import net.citizensnpcs.api.trait.trait.Equipment;
 import net.citizensnpcs.api.trait.trait.Equipment.EquipmentSlot;
 import net.citizensnpcs.npc.skin.SkinnableEntity;
 import net.citizensnpcs.trait.HologramTrait;
+import net.citizensnpcs.trait.LookClose;
 import net.citizensnpcs.trait.PacketNPC;
+import net.citizensnpcs.trait.SkinTrait;
 import net.citizensnpcs.trait.ClickRedirectTrait;
 import net.citizensnpcs.util.NMS;
 import net.citizensnpcs.util.NPCNames;
+import net.citizensnpcs.util.PlayerUpdateTask;
 
 /** Exercises actual Bukkit/NMS behavior; driven by protocol_test.py through the server console. */
 public final class PacketIntegration extends JavaPlugin implements Listener {
@@ -327,6 +333,91 @@ public final class PacketIntegration extends JavaPlugin implements Listener {
                         check("\u00a78[NPC] Alex".equals(npcs.get(1).getFullName()), "Tab refresh preserves head names");
                         check("alex".equals(((SkinnableEntity) npcs.get(1).getEntity()).getSkinName()), "Tab alias preserves skin lookup");
                     });
+                    break;
+                case "skin":
+                case "skinagain":
+                    NPC skinned = npcs.get(1);
+                    Entity previous = skinned.getEntity();
+                    String hash = new String(new char[64]).replace('\0', phase.equals("skin") ? 'a' : 'b');
+                    String texture = Base64.getEncoder().encodeToString(("{\"textures\":{\"SKIN\":{\"url\":\""
+                            + "https://textures.minecraft.net/texture/" + hash + "\"}}}").getBytes(StandardCharsets.UTF_8));
+                    skinned.getOrAddTrait(SkinTrait.class).setSkinPersistent("packet-test-skin", "packet-test-signature", texture);
+                    // A late removal of the old object must not unregister its replacement with the same UUID.
+                    Bukkit.getScheduler().runTaskLater(this, () -> PlayerUpdateTask.deregisterPlayer(previous), 5);
+                    later(phase, () -> {
+                        check(skinned.getEntity() != previous, "skin change recreated the backing entity");
+                        check(skinned.getEntity().getUniqueId().equals(previous.getUniqueId()), "skin change preserves UUID");
+                        check(!skinned.getEntity().isDead(), "replacement entity remains alive");
+                        check(PacketNPC.getByEntityId(previous.getEntityId()) == null, "old interaction ID removed");
+                        check(skinned.getTraitNullable(PacketNPC.class).isTracking(player()), "skin replacement is visible");
+                        check("Alex".equals(skinned.getRawName()), "skin change preserves the NPC name");
+                    });
+                    break;
+                case "reregister":
+                    Entity registered = npcs.get(1).getEntity();
+                    PlayerUpdateTask.registerPlayer(registered);
+                    PlayerUpdateTask.registerPlayer(registered);
+                    Bukkit.getScheduler().runTaskLater(this, () -> PlayerUpdateTask.registerPlayer(registered), 2);
+                    later(phase, () -> {
+                        check(npcs.get(1).getEntity() == registered, "re-registering keeps the current backing entity");
+                        check(!registered.isDead(), "re-registering must not remove the current entity");
+                        check(npcs.get(1).getTraitNullable(PacketNPC.class).isTracking(player()), "re-registered NPC is visible");
+                    });
+                    break;
+                case "skinrefresh":
+                    for (int i = 0; i < 3; i++) {
+                        ((SkinnableEntity) npcs.get(1).getEntity()).getSkinTracker().updateViewer(player());
+                    }
+                    later(phase, () -> check(!npcs.get(1).getEntity().isDead(), "skin refresh keeps the NPC alive"));
+                    break;
+                case "looksetup":
+                    NPC looking = npcs.get(1);
+                    LookClose look = looking.getOrAddTrait(LookClose.class);
+                    look.lookClose(false);
+                    NMS.setHeadAndBodyYaw(looking.getEntity(), 37F);
+                    NMS.setPitch(looking.getEntity(), 13F);
+                    look.lookClose(true);
+                    look.setRandomLook(false);
+                    look.setHeadOnly(false);
+                    look.setRandomlySwitchTargets(false);
+                    CitizensAPI.getDefaultNPCSelector().select(player(), looking);
+                    Bukkit.dispatchCommand(player(), "npc lookclose --range 3");
+                    check(look.getRange() == 3, "lookclose command sets the requested range");
+                    Location origin = looking.getEntity().getLocation();
+                    player().teleport(origin.clone().add(0, 0, 1.5));
+                    Bukkit.getPlayerExact("LookEast").setGameMode(GameMode.CREATIVE);
+                    Bukkit.getPlayerExact("LookEast").teleport(origin.clone().add(2, 0, 0));
+                    Bukkit.getPlayerExact("LookObserver").setGameMode(GameMode.CREATIVE);
+                    Bukkit.getPlayerExact("LookObserver").teleport(origin.clone().add(0, 0, 7));
+                    later(phase, () -> check(looking.getTraitNullable(LookClose.class).getTarget() == player(),
+                            "closest player is the shared target for observers"));
+                    break;
+                case "lookoutside":
+                    player().teleport(npcs.get(1).getEntity().getLocation().add(0, 0, 6));
+                    later(phase, () -> check(npcs.get(1).getTraitNullable(LookClose.class).getTarget()
+                            == Bukkit.getPlayerExact("LookEast"), "outside viewers see the remaining nearby target"));
+                    break;
+                case "lookrefresh":
+                    NPC refreshed = npcs.get(1);
+                    Location refreshAt = refreshed.getEntity().getLocation();
+                    check(refreshed.despawn(DespawnReason.PENDING_RESPAWN), "look refresh despawn accepted");
+                    check(refreshed.spawn(refreshAt, SpawnReason.RESPAWN), "look refresh spawn accepted");
+                    later(phase, () -> check(!refreshed.getEntity().isDead(), "look refresh keeps the new entity alive"));
+                    break;
+                case "lookempty":
+                    Bukkit.getPlayerExact("LookEast").teleport(npcs.get(1).getEntity().getLocation().add(6, 0, 0));
+                    later(phase, () -> check(npcs.get(1).getTraitNullable(LookClose.class).getTarget() == null,
+                            "no target remains beyond the configured range"));
+                    break;
+                case "lookreturn":
+                    Location returnTo = npcs.get(1).getEntity().getLocation();
+                    player().teleport(returnTo.clone().add(0, 0, 1.5));
+                    Bukkit.getPlayerExact("LookEast").teleport(returnTo.clone().add(2, 0, 0));
+                    later(phase, () -> {});
+                    break;
+                case "lookdisable":
+                    npcs.get(1).getTraitNullable(LookClose.class).lookClose(false);
+                    later(phase, () -> {});
                     break;
                 case "reload":
                     List<Integer> ids = new ArrayList<>();
