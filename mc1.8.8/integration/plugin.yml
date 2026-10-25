@@ -1,0 +1,10 @@
+name: PacketIntegration
+main: net.citizensnpcs.integration.PacketIntegration
+version: 1
+depend: [Citizens]
+commands:
+  packettest:
+    permission: packetintegration.admin
+permissions:
+  packetintegration.admin:
+    default: op
