@@ -27,10 +27,12 @@ Tab 列表单独显示 `&8[NPC] ` 加 10 位随机小写字母或数字，例如
 使用 JDK 17 编译，生成 Java 8 字节码；运行目标为 CraftBukkit / Spigot 1.8.8 (`v1_8_R3`)。
 
 ```powershell
-.\mc1.8.8\build.ps1 -Maven 'C:\Users\lenovo\Downloads\citizens-build\tools\apache-maven-3.9.9\bin\mvn.cmd' -Offline
+.\mc1.8.8\build.ps1
 ```
 
-本机 Maven 缓存已具备构建依赖，包括同一时期 CitizensAPI 2.0.35（提交 `e1959813`）、CraftBukkit 1.8.8 和编译用 Spigot 1.21.1。换用其他环境时需要先准备这些依赖，删除 `-Offline` 可允许 Maven 下载仓库中仍然可用的依赖。`main` 使用较新的 Spigot 编译依赖沿用上游的跨版本写法，最终成品只打包 `main` 与 `v1_8_R3`，不包含现代服务端适配模块。
+在线构建会校验并准备 ProtocolLib 5.0.0；也可通过 `TINYPX_PROTOCOLLIB_JAR` 指定已下载的官方文件。`-Offline` 要求 Maven 缓存中已有全部依赖。CitizensAPI 固定为与提交 `e1959813` 对应的 `2.0.35-20240712.063557-13`，避免可变的快照版本影响构建。`main` 使用较新的 Spigot 编译依赖沿用上游的跨版本写法，最终成品只打包 `main` 与 `v1_8_R3`，不包含现代服务端适配模块。
+
+Linux 构建使用 `./mc1.8.8/build.sh`，Zeta 的自动流水线会准备依赖并生成插件制品。
 
 ## 验证
 
