@@ -13,7 +13,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <craftbukkit.version>1.21.1-R0.1-SNAPSHOT</craftbukkit.version>
         <placeholderapi.version>2.11.5</placeholderapi.version>
-        <citizensapi.version>${project.version}</citizensapi.version>
+        <citizensapi.version>2.0.35-20240712.063557-13</citizensapi.version>
         <worldguard.version>7.0.9</worldguard.version>
     </properties>
     <repositories>
