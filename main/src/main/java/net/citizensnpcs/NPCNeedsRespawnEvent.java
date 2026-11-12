@@ -5,18 +5,13 @@ import org.bukkit.event.HandlerList;
 
 import net.citizensnpcs.api.event.NPCEvent;
 import net.citizensnpcs.api.npc.NPC;
-import net.citizensnpcs.util.ChunkCoord;
 
 public class NPCNeedsRespawnEvent extends NPCEvent {
-    private final ChunkCoord coord;
-
-    public NPCNeedsRespawnEvent(NPC npc, ChunkCoord at) {
-        super(npc);
-        coord = at;
-    }
+    private final Location spawn;
 
     public NPCNeedsRespawnEvent(NPC npc, Location at) {
-        this(npc, new ChunkCoord(at));
+        super(npc);
+        spawn = at;
     }
 
     @Override
@@ -24,8 +19,8 @@ public class NPCNeedsRespawnEvent extends NPCEvent {
         return handlers;
     }
 
-    public ChunkCoord getSpawnLocation() {
-        return coord;
+    public Location getSpawnLocation() {
+        return spawn.clone();
     }
 
     public static HandlerList getHandlerList() {

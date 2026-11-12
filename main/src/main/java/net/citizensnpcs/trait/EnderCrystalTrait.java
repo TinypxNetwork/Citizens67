@@ -35,9 +35,9 @@ public class EnderCrystalTrait extends Trait {
     }
 
     private void updateModifiers() {
-        if (!(npc.getCosmeticEntity() instanceof EnderCrystal) || !SUPPORT_SHOW_BOTTOM)
+        if (!(npc.getEntity() instanceof EnderCrystal) || !SUPPORT_SHOW_BOTTOM)
             return;
-        EnderCrystal crystal = (EnderCrystal) npc.getCosmeticEntity();
+        EnderCrystal crystal = (EnderCrystal) npc.getEntity();
         try {
             crystal.setShowingBottom(showBase);
         } catch (NoSuchMethodError err) {

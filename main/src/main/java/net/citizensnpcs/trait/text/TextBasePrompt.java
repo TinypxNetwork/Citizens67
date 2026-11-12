@@ -1,7 +1,5 @@
 package net.citizensnpcs.trait.text;
 
-import java.time.DateTimeException;
-import java.time.Duration;
 import java.util.Arrays;
 
 import org.bukkit.ChatColor;
@@ -13,8 +11,8 @@ import org.bukkit.entity.Player;
 
 import com.google.common.base.Joiner;
 
+import net.citizensnpcs.Settings.Setting;
 import net.citizensnpcs.api.util.Messaging;
-import net.citizensnpcs.api.util.SpigotUtil;
 import net.citizensnpcs.util.Messages;
 
 public class TextBasePrompt extends StringPrompt {
@@ -74,29 +72,20 @@ public class TextBasePrompt extends StringPrompt {
             }
         } else if (input.equalsIgnoreCase("random")) {
             text.toggleRandomTalker();
-        } else if (original.trim().equalsIgnoreCase("send text to chat")) {
-            text.toggleSendTextToChat();
         } else if (original.trim().equalsIgnoreCase("realistic looking")) {
             text.toggleRealisticLooking();
         } else if (original.trim().equalsIgnoreCase("speech bubbles")) {
             text.toggleSpeechBubbles();
-        } else if (original.trim().startsWith("speech bubbles duration")) {
-            try {
-                Duration duration = SpigotUtil.parseDuration(original.replace("speech bubbles duration", "").trim(),
-                        null);
-                text.setSpeechBubbleDuration(duration);
-                Messaging.sendErrorTr(sender, Messages.SPEECH_BUBBLES_DURATION_SET, duration);
-            } catch (DateTimeException ex) {
-                Messaging.sendErrorTr(sender, Messages.INVALID_SPEECH_BUBBLES_DURATION);
-            }
         } else if (input.equalsIgnoreCase("close") || original.trim().equalsIgnoreCase("talk close")) {
             text.toggleTalkClose();
         } else if (input.equalsIgnoreCase("range")) {
             try {
-                double range = Math.max(0, Double.parseDouble(parts[1]));
+                double range = Math.min(Math.max(0, Double.parseDouble(parts[1])), Setting.MAX_TEXT_RANGE.asDouble());
                 text.setRange(range);
                 Messaging.sendTr(sender, Messages.TEXT_EDITOR_RANGE_SET, range);
-            } catch (NumberFormatException | ArrayIndexOutOfBoundsException e) {
+            } catch (NumberFormatException e) {
+                Messaging.sendErrorTr(sender, Messages.TEXT_EDITOR_INVALID_RANGE);
+            } catch (ArrayIndexOutOfBoundsException e) {
                 Messaging.sendErrorTr(sender, Messages.TEXT_EDITOR_INVALID_RANGE);
             }
         } else if (input.equalsIgnoreCase("item")) {
@@ -121,7 +110,7 @@ public class TextBasePrompt extends StringPrompt {
         Messaging.send((Player) context.getForWhom(),
                 Messaging.tr(Messages.TEXT_EDITOR_START_PROMPT, colorToggleableText(text.shouldTalkClose()),
                         colorToggleableText(text.isRandomTalker()), colorToggleableText(text.useSpeechBubbles()),
-                        colorToggleableText(text.useRealisticLooking()), colorToggleableText(text.sendTextToChat())));
+                        colorToggleableText(text.useRealisticLooking())));
         int page = context.getSessionData("page") == null ? 1 : (int) context.getSessionData("page");
         text.sendPage((Player) context.getForWhom(), page);
         return "";

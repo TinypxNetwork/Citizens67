@@ -11,8 +11,10 @@ import java.util.WeakHashMap;
 
 import javax.annotation.Nullable;
 
+import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Location;
+import org.bukkit.scheduler.BukkitTask;
 
 import com.mojang.authlib.GameProfile;
 
@@ -22,10 +24,8 @@ import net.citizensnpcs.api.event.DespawnReason;
 import net.citizensnpcs.api.event.SpawnReason;
 import net.citizensnpcs.api.npc.NPC;
 import net.citizensnpcs.api.util.Messaging;
-import net.citizensnpcs.api.util.schedulers.SchedulerTask;
 import net.citizensnpcs.npc.skin.profile.ProfileFetcher;
 import net.citizensnpcs.trait.SkinTrait;
-import net.citizensnpcs.util.GameProfileWrapper;
 import net.citizensnpcs.util.SkinProperty;
 
 /**
@@ -37,7 +37,7 @@ public class Skin {
     private boolean hasFetched;
     private volatile boolean isValid = true;
     private final Map<SkinnableEntity, Void> pending = new WeakHashMap<>(15);
-    private SchedulerTask retryTask;
+    private BukkitTask retryTask;
     private volatile SkinProperty skinData;
     private volatile UUID skinId;
     private final String skinName;
@@ -47,6 +47,7 @@ public class Skin {
      *
      * @param skinName
      *            The name of the player the skin belongs to.
+     * @param forceUpdate
      */
     Skin(String skinName) {
         this.skinName = skinName.toLowerCase(Locale.ROOT);
@@ -77,21 +78,29 @@ public class Skin {
         Objects.requireNonNull(entity);
 
         NPC npc = entity.getNPC();
+        if (!skinName.equalsIgnoreCase(entity.getSkinName()))
+            return false;
         SkinTrait skinTrait = npc.getOrAddTrait(SkinTrait.class);
         // Use npc cached skin if available.
         // If npc requires latest skin, cache is used for faster availability until the latest skin can be loaded.
         String cachedName = npc.data().get(CACHED_SKIN_UUID_NAME_METADATA);
         String texture = skinTrait.getTexture();
-        if (skinName.equals(cachedName) && texture != null && !texture.equals("cache")) {
+        if ((skinName.equals(cachedName) || !skinTrait.shouldUpdateSkins())
+                && texture != null && !texture.equals("cache")) {
             setNPCTexture(entity, new SkinProperty("textures", texture, skinTrait.getSignature()));
 
+            // check if NPC prefers to use cached skin over the latest skin.
+            if (entity.getNPC().data().has("player-skin-use-latest")) {
+                entity.getNPC().data().remove("player-skin-use-latest");
+            }
             if (!skinTrait.shouldUpdateSkins()) // cache preferred
                 return true;
         }
         if (!hasSkinData()) {
-            String npcName = ChatColor.stripColor(npc.getName()).toLowerCase(Locale.ROOT);
+            String defaultSkinName = ChatColor.stripColor(npc.getName()).toLowerCase(Locale.ROOT);
 
-            if (!skinTrait.shouldUpdateSkins() && !skinTrait.fetchDefaultSkin() && skinName.equals(npcName))
+            if (npc.hasTrait(SkinTrait.class) && skinName.equals(defaultSkinName)
+                    && !npc.getOrAddTrait(SkinTrait.class).fetchDefaultSkin())
                 return false;
 
             if (hasFetched)
@@ -117,28 +126,36 @@ public class Skin {
     public void applyAndRespawn(SkinnableEntity entity) {
         Objects.requireNonNull(entity);
 
+        NPC npc = entity.getNPC();
+        if (!npc.isSpawned() || npc.getEntity() != entity.getBukkitEntity())
+            return;
+
         if (!apply(entity))
             return;
 
-        NPC npc = entity.getNPC();
-
-        if (!npc.isSpawned())
-            return;
-
-        CitizensAPI.getScheduler().runEntityTask(npc.getEntity(), () -> {
-            Location loc = npc.getStoredLocation();
-            npc.despawn(DespawnReason.PENDING_RESPAWN);
-            npc.spawn(loc, SpawnReason.RESPAWN);
+        Bukkit.getServer().getScheduler().scheduleSyncDelayedTask(CitizensAPI.getPlugin(), () -> {
+            if (!npc.isSpawned() || npc.getEntity() != entity.getBukkitEntity()
+                    || !skinName.equalsIgnoreCase(entity.getSkinName()))
+                return;
+            Location at = npc.getStoredLocation();
+            if (npc.despawn(DespawnReason.PENDING_RESPAWN)) {
+                npc.spawn(at, SpawnReason.RESPAWN);
+            }
         });
     }
 
     private void fetch() {
         int maxRetries = Setting.MAX_NPC_SKIN_RETRIES.asInt();
         if (maxRetries > -1 && fetchRetries >= maxRetries) {
-            Messaging.idebug(() -> "Reached max skin fetch retries for '" + skinName + "'");
+            if (Messaging.isDebugging()) {
+                Messaging.debug("Reached max skin fetch retries for '" + skinName + "'");
+            }
             return;
         }
         if (skinName.length() < 3 || skinName.length() > 16) {
+            if (Messaging.isDebugging()) {
+                Messaging.debug("Skin name invalid length '" + skinName + "'");
+            }
             return;
         }
         if (skinName.toLowerCase(Locale.ROOT).startsWith("cit-"))
@@ -159,7 +176,8 @@ public class Skin {
 
                     fetchRetries++;
                     long delay = Setting.NPC_SKIN_RETRY_DELAY.asTicks();
-                    retryTask = CitizensAPI.getScheduler().runTaskLater(this::fetch, delay);
+                    retryTask = Bukkit.getScheduler().runTaskLater(CitizensAPI.getPlugin(), (Runnable) this::fetch,
+                            delay);
 
                     Messaging.idebug(() -> "Retrying skin fetch for '" + skinName + "' in " + delay + " ticks.");
                     break;
@@ -179,9 +197,10 @@ public class Skin {
             Messaging.idebug(() -> "Reached max skin fetch retries for '" + skinName + "'");
             return;
         }
-        if (skinName.length() < 3 || skinName.length() > 16)
+        if (skinName.length() < 3 || skinName.length() > 16) {
+            Messaging.idebug(() -> "Skin name invalid length '" + skinName + "'");
             return;
-
+        }
         if (skinName.toLowerCase(Locale.ROOT).startsWith("cit-"))
             return;
 
@@ -200,7 +219,8 @@ public class Skin {
                     }
                     fetchRetries++;
                     int delay = Setting.NPC_SKIN_RETRY_DELAY.asTicks();
-                    retryTask = CitizensAPI.getScheduler().runTaskLater(this::fetchForced, delay);
+                    retryTask = Bukkit.getScheduler().runTaskLater(CitizensAPI.getPlugin(),
+                            (Runnable) this::fetchForced, delay);
 
                     Messaging.idebug(() -> "Retrying skin fetch for '" + skinName + "' in " + delay + " ticks.");
                     break;
@@ -250,12 +270,11 @@ public class Skin {
             isValid = false;
             return;
         }
-        GameProfileWrapper gpw = GameProfileWrapper.fromMojangProfile(profile);
-        if (!gpw.name.toLowerCase(Locale.ROOT).equals(skinName)) {
-            Messaging.debug("GameProfile name (" + gpw.name + ") and " + "skin name (" + skinName
+        if (!profile.getName().toLowerCase(Locale.ROOT).equals(skinName)) {
+            Messaging.debug("GameProfile name (" + profile.getName() + ") and " + "skin name (" + skinName
                     + ") do not match. Has the user renamed recently?");
         }
-        skinId = gpw.uuid;
+        skinId = profile.getId();
         skinData = SkinProperty.fromMojangProfile(profile);
 
         List<SkinnableEntity> entities = new ArrayList<>(pending.keySet());
@@ -339,23 +358,17 @@ public class Skin {
         return skin;
     }
 
-    public static boolean hasSkin(String name) {
-        synchronized (CACHE) {
-            return CACHE.containsKey(name);
-        }
-    }
-
     private static void setNPCSkinData(SkinnableEntity entity, String skinName, UUID skinId,
             SkinProperty skinProperty) {
         NPC npc = entity.getNPC();
         SkinTrait skinTrait = npc.getOrAddTrait(SkinTrait.class);
 
-        // cache skins for faster initial skin availability and for use when the latest skin is not required.
+        // cache skins for faster initial skin availability and
+        // for use when the latest skin is not required.
         npc.data().setPersistent(CACHED_SKIN_UUID_NAME_METADATA, skinName);
         npc.data().setPersistent(CACHED_SKIN_UUID_METADATA, skinId.toString());
         if (skinProperty.value != null) {
-            skinTrait.applyTextureInternal(skinProperty.signature == null ? "" : skinProperty.signature,
-                    skinProperty.value);
+            skinTrait.setTexture(skinProperty.value, skinProperty.signature == null ? "" : skinProperty.signature);
             setNPCTexture(entity, skinProperty);
         } else {
             skinTrait.clearTexture();
@@ -363,15 +376,16 @@ public class Skin {
     }
 
     private static void setNPCTexture(SkinnableEntity entity, SkinProperty skinProperty) {
-        GameProfile profile = entity.gameProfile();
+        GameProfile profile = entity.getProfile();
 
-        // don't set property if already set since this sometimes causes packet errors that disconnect the client.
+        // don't set property if already set since this sometimes causes
+        // packet errors that disconnect the client.
         SkinProperty current = SkinProperty.fromMojangProfile(profile);
         if (current != null && current.value.equals(skinProperty.value) && current.signature != null
                 && current.signature.equals(skinProperty.signature))
             return;
 
-        entity.applyTexture(skinProperty);
+        skinProperty.apply(profile);
     }
 
     private static final Map<String, Skin> CACHE = new HashMap<>(20);

@@ -1,12 +1,13 @@
 package net.citizensnpcs.trait.waypoint;
 
-import java.util.HashMap;
 import java.util.Map;
 
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
+
+import com.google.common.collect.Maps;
 
 import net.citizensnpcs.api.CitizensAPI;
 import net.citizensnpcs.api.event.SpawnReason;
@@ -19,12 +20,12 @@ import net.citizensnpcs.util.Util;
  * A helper class for storing a number of entity markers. By default an entity marker is a non-persisted EnderSignal.
  */
 public class EntityMarkers<T> {
-    private final Map<T, Entity> markers = new HashMap<>();
+    private final Map<T, Entity> markers = Maps.newHashMap();
     private final NPCRegistry registry = CitizensAPI.getTemporaryNPCRegistry();
     private EntityType type;
 
     public EntityMarkers() {
-        this(Util.getFallbackEntityType("SHULKER_BULLET", "LEASH_KNOT", "LEASH_HITCH"));
+        this(DEFAULT_ENTITY_TYPE);
     }
 
     public EntityMarkers(EntityType type) {
@@ -50,9 +51,7 @@ public class EntityMarkers<T> {
     }
 
     public void destroyMarkers() {
-        for (Entity entity : markers.values()) {
-            ((NPCHolder) entity).getNPC().destroy();
-        }
+        registry.deregisterAll();
         markers.clear();
     }
 
@@ -78,4 +77,8 @@ public class EntityMarkers<T> {
         npc.spawn(at.clone().add(0.5, 0, 0.5), SpawnReason.CREATE);
         return npc.getEntity();
     }
+
+    private static final EntityType DEFAULT_ENTITY_TYPE = Util.getFallbackEntityType("SHULKER_BULLET", "LEASH_KNOT",
+            "LEASH_HITCH");
+
 }

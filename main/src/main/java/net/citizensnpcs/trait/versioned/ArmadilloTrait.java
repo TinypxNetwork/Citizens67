@@ -33,9 +33,9 @@ public class ArmadilloTrait extends Trait {
 
     @Override
     public void run() {
-        if (!npc.isSpawned() || !(npc.getCosmeticEntity() instanceof Armadillo))
+        if (!npc.isSpawned() || !(npc.getEntity() instanceof Armadillo))
             return;
-        NMS.setArmadilloState(npc.getCosmeticEntity(), state);
+        NMS.setArmadilloState(npc.getEntity(), state);
     }
 
     public void setState(ArmadilloState state) {
@@ -58,7 +58,7 @@ public class ArmadilloTrait extends Trait {
             max = 1,
             flags = "",
             permission = "citizens.npc.armadillo")
-    @Requirements(selected = true, ownership = true, cosmeticTypes = EntityType.ARMADILLO)
+    @Requirements(selected = true, ownership = true, types = EntityType.ARMADILLO)
     public static void allay(CommandContext args, CommandSender sender, NPC npc, @Flag("state") ArmadilloState state)
             throws CommandException {
         ArmadilloTrait trait = npc.getOrAddTrait(ArmadilloTrait.class);

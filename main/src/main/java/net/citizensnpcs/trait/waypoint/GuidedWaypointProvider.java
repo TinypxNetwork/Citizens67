@@ -1,14 +1,13 @@
 package net.citizensnpcs.trait.waypoint;
 
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
 
+import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.command.CommandSender;
-import org.bukkit.conversations.Conversation;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -18,12 +17,13 @@ import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 
 import com.google.common.collect.Iterables;
+import com.google.common.collect.Lists;
 
 import ch.ethz.globis.phtree.PhRangeQuery;
 import ch.ethz.globis.phtree.PhTree;
 import net.citizensnpcs.api.CitizensAPI;
-import net.citizensnpcs.api.ai.tree.Behavior;
-import net.citizensnpcs.api.ai.tree.BehaviorStatus;
+import net.citizensnpcs.api.ai.Goal;
+import net.citizensnpcs.api.ai.GoalSelector;
 import net.citizensnpcs.api.astar.AStarGoal;
 import net.citizensnpcs.api.astar.AStarMachine;
 import net.citizensnpcs.api.astar.AStarNode;
@@ -35,8 +35,8 @@ import net.citizensnpcs.api.npc.NPC;
 import net.citizensnpcs.api.persistence.PersistenceLoader;
 import net.citizensnpcs.api.util.DataKey;
 import net.citizensnpcs.api.util.Messaging;
+import net.citizensnpcs.npc.ai.NPCHolder;
 import net.citizensnpcs.trait.waypoint.WaypointProvider.EnumerableWaypointProvider;
-import net.citizensnpcs.trait.waypoint.triggers.TriggerEditPrompt;
 import net.citizensnpcs.util.Messages;
 import net.citizensnpcs.util.Util;
 
@@ -47,10 +47,10 @@ import net.citizensnpcs.util.Util;
  * along the roads.
  */
 public class GuidedWaypointProvider implements EnumerableWaypointProvider {
-    private GuidedGoal currentGoal;
-    private final List<Waypoint> destinations = new ArrayList<>();
+    private GuidedAIGoal currentGoal;
+    private final List<Waypoint> destinations = Lists.newArrayList();
     private float distance = -1;
-    private final List<Waypoint> guides = new ArrayList<>();
+    private final List<Waypoint> guides = Lists.newArrayList();
     private NPC npc;
     private boolean paused;
     private final PhTree<Waypoint> tree = PhTree.create(3);
@@ -84,9 +84,7 @@ public class GuidedWaypointProvider implements EnumerableWaypointProvider {
         }
         Player player = (Player) sender;
         return new WaypointEditor() {
-            private Conversation conversation;
             private final EntityMarkers<Waypoint> markers = new EntityMarkers<>();
-            private Waypoint selected;
             private boolean showPath = true;
 
             @Override
@@ -108,9 +106,9 @@ public class GuidedWaypointProvider implements EnumerableWaypointProvider {
                 Entity entity = markers.createMarker(waypoint, waypoint.getLocation().clone().add(0, 1, 0));
                 if (entity == null)
                     return null;
-                NPC npc = CitizensAPI.getNPCRegistry().getNPC(entity);
-                npc.data().setPersistent("waypointhashcode", waypoint.hashCode());
-                return npc;
+                NPC npc2 = ((NPCHolder) entity).getNPC();
+                npc2.data().setPersistent("waypointhashcode", waypoint.hashCode());
+                return ((NPCHolder) entity).getNPC();
             }
 
             private void createWaypointMarkers() {
@@ -126,38 +124,18 @@ public class GuidedWaypointProvider implements EnumerableWaypointProvider {
             public void end() {
                 Messaging.sendTr(player, Messages.GUIDED_WAYPOINT_EDITOR_END);
                 markers.destroyMarkers();
-                if (conversation != null) {
-                    conversation.abandon();
-                    conversation = null;
-                }
-                selected = null;
-            }
-
-            @Override
-            public Waypoint getCurrentWaypoint() {
-                return selected;
             }
 
             @EventHandler(ignoreCancelled = true)
             public void onPlayerChat(AsyncPlayerChatEvent event) {
                 if (!event.getPlayer().equals(sender))
                     return;
-                if (event.getMessage().equalsIgnoreCase("triggers")) {
+                if (event.getMessage().equalsIgnoreCase("toggle path")) {
                     event.setCancelled(true);
-                    CitizensAPI.getScheduler().runEntityTask(player, () -> {
-                        conversation = TriggerEditPrompt.start(player, this);
-                        conversation.addConversationAbandonedListener(e -> {
-                            setPaused(false);
-                            conversation = null;
-                        });
-                        setPaused(true);
-                    });
-                } else if (event.getMessage().equalsIgnoreCase("toggle path")) {
-                    event.setCancelled(true);
-                    CitizensAPI.getScheduler().runTask(this::togglePath);
+                    Bukkit.getScheduler().scheduleSyncDelayedTask(CitizensAPI.getPlugin(), this::togglePath);
                 } else if (event.getMessage().equalsIgnoreCase("clear")) {
                     event.setCancelled(true);
-                    CitizensAPI.getScheduler().runTask(() -> {
+                    Bukkit.getScheduler().scheduleSyncDelayedTask(CitizensAPI.getPlugin(), () -> {
                         destinations.clear();
                         guides.clear();
                         if (showPath) {
@@ -169,7 +147,7 @@ public class GuidedWaypointProvider implements EnumerableWaypointProvider {
                     double d = Double.parseDouble(event.getMessage().replace("distance ", "").trim());
                     if (d <= 0)
                         return;
-                    CitizensAPI.getScheduler().runTask(() -> {
+                    Bukkit.getScheduler().scheduleSyncDelayedTask(CitizensAPI.getPlugin(), () -> {
                         distance = (float) d;
                         Messaging.sendTr(sender, Messages.GUIDED_WAYPOINT_EDITOR_DISTANCE_SET, d);
                     });
@@ -185,13 +163,14 @@ public class GuidedWaypointProvider implements EnumerableWaypointProvider {
                 if (event.getPlayer().getWorld() != npc.getEntity().getWorld())
                     return;
                 event.setCancelled(true);
+                Location at = event.getClickedBlock().getLocation();
                 for (Waypoint waypoint : waypoints()) {
-                    if (waypoint.getLocation().getBlock().equals(event.getClickedBlock())) {
+                    if (waypoint.getLocation().equals(at)) {
                         Messaging.sendTr(player, Messages.GUIDED_WAYPOINT_EDITOR_ALREADY_TAKEN);
                         return;
                     }
                 }
-                Waypoint element = new Waypoint(event.getClickedBlock().getLocation());
+                Waypoint element = new Waypoint(at);
                 if (player.isSneaking()) {
                     destinations.add(element);
                     Messaging.sendTr(player, Messages.GUIDED_WAYPOINT_EDITOR_ADDED_AVAILABLE);
@@ -206,7 +185,6 @@ public class GuidedWaypointProvider implements EnumerableWaypointProvider {
                         createMarker(element);
                     }
                 }
-                selected = element;
                 rebuildTree();
             }
 
@@ -222,12 +200,6 @@ public class GuidedWaypointProvider implements EnumerableWaypointProvider {
                 while (itr.hasNext()) {
                     Waypoint point = itr.next();
                     if (point.hashCode() == hashcode) {
-                        if (selected != point) {
-                            selected = point;
-                            Messaging.sendTr(player, Messages.WAYPOINT_EDITOR_SELECTED_WAYPOINT,
-                                    selected.getLocation());
-                            return;
-                        }
                         markers.removeMarker(point);
                         itr.remove();
                         break;
@@ -239,10 +211,10 @@ public class GuidedWaypointProvider implements EnumerableWaypointProvider {
                 showPath = !showPath;
                 if (showPath) {
                     createWaypointMarkers();
-                    Messaging.sendTr(player, Messages.WAYPOINT_EDITOR_SHOWING_MARKERS);
+                    Messaging.sendTr(player, Messages.LINEAR_WAYPOINT_EDITOR_SHOWING_MARKERS);
                 } else {
                     markers.destroyMarkers();
-                    Messaging.sendTr(player, Messages.WAYPOINT_EDITOR_NOT_SHOWING_MARKERS);
+                    Messaging.sendTr(player, Messages.LINEAR_WAYPOINT_EDITOR_NOT_SHOWING_MARKERS);
                 }
             }
         };
@@ -283,7 +255,7 @@ public class GuidedWaypointProvider implements EnumerableWaypointProvider {
         if (currentGoal == null)
             return;
         currentGoal.onProviderChanged();
-        npc.getDefaultBehaviorController().removeBehavior(currentGoal);
+        npc.getDefaultGoalController().removeGoal(currentGoal);
         currentGoal = null;
     }
 
@@ -291,8 +263,8 @@ public class GuidedWaypointProvider implements EnumerableWaypointProvider {
     public void onSpawn(NPC npc) {
         this.npc = npc;
         if (currentGoal == null) {
-            currentGoal = new GuidedGoal();
-            npc.getDefaultBehaviorController().addBehavior(currentGoal);
+            currentGoal = new GuidedAIGoal();
+            npc.getDefaultGoalController().addGoal(currentGoal, 1);
         }
     }
 
@@ -348,7 +320,7 @@ public class GuidedWaypointProvider implements EnumerableWaypointProvider {
         return Iterables.concat(destinations, guides);
     }
 
-    private class GuidedGoal implements Behavior {
+    private class GuidedAIGoal implements Goal {
         private GuidedPlan plan;
         private Waypoint target;
 
@@ -368,29 +340,29 @@ public class GuidedWaypointProvider implements EnumerableWaypointProvider {
         }
 
         @Override
-        public BehaviorStatus run() {
+        public void run(GoalSelector selector) {
             if (plan != null && plan.isComplete()) {
                 target.onReach(npc);
                 plan = null;
             }
-            if (plan == null)
-                return BehaviorStatus.SUCCESS;
-
+            if (plan == null) {
+                selector.finish();
+                return;
+            }
             if (npc.getNavigator().isNavigating())
-                return BehaviorStatus.RUNNING;
+                return;
 
             Waypoint current = plan.getCurrentWaypoint();
-            npc.getNavigator().setTarget(Util.getCenterLocation(current.getLocation().getBlock()));
+            npc.getNavigator().setTarget(current.getLocation());
             npc.getNavigator().getLocalParameters().addSingleUseCallback(cancelReason -> {
                 if (plan != null) {
                     plan.update(npc);
                 }
             });
-            return BehaviorStatus.RUNNING;
         }
 
         @Override
-        public boolean shouldExecute() {
+        public boolean shouldExecute(GoalSelector selector) {
             if (paused || destinations.size() == 0 || !npc.isSpawned() || npc.getNavigator().isNavigating())
                 return false;
 
@@ -399,9 +371,89 @@ public class GuidedWaypointProvider implements EnumerableWaypointProvider {
                 target = null;
                 return false;
             }
-            plan = ASTAR.runFully(new PathfinderGoal(target),
-                    new PathfinderNode(null, new Waypoint(npc.getStoredLocation())));
+            plan = ASTAR.runFully(new GuidedGoal(target), new GuidedNode(null, new Waypoint(npc.getStoredLocation())));
             return plan != null;
+        }
+    }
+
+    private static class GuidedGoal implements AStarGoal<GuidedNode> {
+        private final Waypoint dest;
+
+        public GuidedGoal(Waypoint dest) {
+            this.dest = dest;
+        }
+
+        @Override
+        public float g(GuidedNode from, GuidedNode to) {
+            return (float) from.distance(to.waypoint);
+        }
+
+        @Override
+        public float getInitialCost(GuidedNode node) {
+            return h(node);
+        }
+
+        @Override
+        public float h(GuidedNode from) {
+            return (float) from.distance(dest);
+        }
+
+        @Override
+        public boolean isFinished(GuidedNode node) {
+            return node.waypoint.equals(dest);
+        }
+    }
+
+    private class GuidedNode extends AStarNode {
+        private final Waypoint waypoint;
+
+        public GuidedNode(GuidedNode parent, Waypoint waypoint) {
+            super(parent);
+            this.waypoint = waypoint;
+        }
+
+        @Override
+        public Plan buildPlan() {
+            return new GuidedPlan(this.<GuidedNode> orderedPath());
+        }
+
+        public double distance(Waypoint dest) {
+            return waypoint.distance(dest);
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (this == obj)
+                return true;
+            if (obj == null || getClass() != obj.getClass())
+                return false;
+            GuidedNode other = (GuidedNode) obj;
+            if (!Objects.equals(waypoint, other.waypoint))
+                return false;
+            return true;
+        }
+
+        @Override
+        public Iterable<AStarNode> getNeighbours() {
+            PhTree<Waypoint> source = getParent() == null ? tree : treePlusDestinations;
+            PhRangeQuery<Waypoint> query = source.rangeQuery(
+                    distance == -1 ? npc.getNavigator().getDefaultParameters().range() : distance,
+                    waypoint.getLocation().getBlockX(), waypoint.getLocation().getBlockY(),
+                    waypoint.getLocation().getBlockZ());
+            List<AStarNode> neighbours = Lists.newArrayList();
+            query.forEachRemaining(wp -> neighbours.add(new GuidedNode(this, wp)));
+
+            return neighbours;
+        }
+
+        @Override
+        public int hashCode() {
+            return 31 + (waypoint == null ? 0 : waypoint.hashCode());
+        }
+
+        @Override
+        public String toString() {
+            return "GuidedNode [" + waypoint + "]";
         }
     }
 
@@ -409,7 +461,7 @@ public class GuidedWaypointProvider implements EnumerableWaypointProvider {
         private int index = 0;
         private final Waypoint[] path;
 
-        public GuidedPlan(Iterable<PathfinderNode> path) {
+        public GuidedPlan(Iterable<GuidedNode> path) {
             this.path = Iterables.toArray(Iterables.transform(path, to -> to.waypoint), Waypoint.class);
         }
 
@@ -428,86 +480,5 @@ public class GuidedWaypointProvider implements EnumerableWaypointProvider {
         }
     }
 
-    private static class PathfinderGoal implements AStarGoal<PathfinderNode> {
-        private final Waypoint dest;
-
-        public PathfinderGoal(Waypoint dest) {
-            this.dest = dest;
-        }
-
-        @Override
-        public float g(PathfinderNode from, PathfinderNode to) {
-            return (float) from.distance(to.waypoint);
-        }
-
-        @Override
-        public float getInitialCost(PathfinderNode node) {
-            return h(node);
-        }
-
-        @Override
-        public float h(PathfinderNode from) {
-            return (float) from.distance(dest);
-        }
-
-        @Override
-        public boolean isFinished(PathfinderNode node) {
-            return node.waypoint.equals(dest);
-        }
-    }
-
-    private class PathfinderNode extends AStarNode {
-        private final Waypoint waypoint;
-
-        public PathfinderNode(PathfinderNode parent, Waypoint waypoint) {
-            super(parent);
-            this.waypoint = waypoint;
-        }
-
-        @Override
-        public Plan buildPlan() {
-            return new GuidedPlan(this.<PathfinderNode> orderedPath());
-        }
-
-        public double distance(Waypoint dest) {
-            return waypoint.distance(dest);
-        }
-
-        @Override
-        public boolean equals(Object obj) {
-            if (this == obj)
-                return true;
-            if (obj == null || getClass() != obj.getClass())
-                return false;
-            PathfinderNode other = (PathfinderNode) obj;
-            if (!Objects.equals(waypoint, other.waypoint))
-                return false;
-            return true;
-        }
-
-        @Override
-        public Iterable<AStarNode> getNeighbours() {
-            PhTree<Waypoint> source = getParent() == null ? tree : treePlusDestinations;
-            PhRangeQuery<Waypoint> query = source.rangeQuery(
-                    distance == -1 ? npc.getNavigator().getDefaultParameters().range() : distance,
-                    waypoint.getLocation().getBlockX(), waypoint.getLocation().getBlockY(),
-                    waypoint.getLocation().getBlockZ());
-            List<AStarNode> neighbours = new ArrayList<>();
-            query.forEachRemaining(wp -> neighbours.add(new PathfinderNode(this, wp)));
-
-            return neighbours;
-        }
-
-        @Override
-        public int hashCode() {
-            return 31 + (waypoint == null ? 0 : waypoint.hashCode());
-        }
-
-        @Override
-        public String toString() {
-            return "GuidedNode [" + waypoint + "]";
-        }
-    }
-
-    private static final AStarMachine<PathfinderNode, GuidedPlan> ASTAR = AStarMachine.createWithDefaultStorage();
+    private static AStarMachine<GuidedNode, GuidedPlan> ASTAR = AStarMachine.createWithDefaultStorage();
 }

@@ -3,13 +3,12 @@ package net.citizensnpcs.util;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Consumer;
+import java.util.UUID;
+import java.util.function.Function;
 
 import org.bukkit.Location;
 import org.bukkit.Sound;
 import org.bukkit.World;
-import org.bukkit.attribute.Attribute;
-import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.block.Block;
 import org.bukkit.command.BlockCommandSender;
 import org.bukkit.entity.Enderman;
@@ -42,18 +41,21 @@ import net.citizensnpcs.api.util.EntityDim;
 import net.citizensnpcs.api.util.SpigotUtil.InventoryViewAPI;
 import net.citizensnpcs.npc.ai.MCNavigationStrategy.MCNavigator;
 import net.citizensnpcs.npc.ai.MCTargetStrategy.TargetNavigator;
+import net.citizensnpcs.npc.ai.NPCHolder;
 import net.citizensnpcs.trait.EntityPoseTrait.EntityPose;
+import net.citizensnpcs.trait.MirrorTrait;
+import net.citizensnpcs.trait.SneakTrait;
 import net.citizensnpcs.trait.versioned.ArmadilloTrait.ArmadilloState;
 import net.citizensnpcs.trait.versioned.CamelTrait.CamelPose;
 import net.citizensnpcs.trait.versioned.SnifferTrait.SnifferState;
-import net.citizensnpcs.util.EntityPacketTracker.PacketBundler;
+import net.citizensnpcs.util.EntityPacketTracker;
 import net.citizensnpcs.util.NMS.MinecraftNavigationType;
 
 public interface NMSBridge {
     default void activate(Entity entity) {
     }
 
-    public void addEntityToWorld(Entity entity, SpawnReason custom, Consumer<Boolean> callback);
+    public boolean addEntityToWorld(Entity entity, SpawnReason custom);
 
     public void addOrRemoveFromPlayerList(Entity entity, boolean remove);
 
@@ -61,13 +63,9 @@ public interface NMSBridge {
 
     public void cancelMoveDestination(Entity entity);
 
-    public boolean canNavigateTo(Entity entity, Location dest, NavigatorParameters params);
-
     public default Iterable<Object> createBundlePacket(List<Object> packets) {
         return packets;
     }
-
-    public EntityPacketTracker createPacketTracker(Entity entity, PacketBundler bundler);
 
     public GameProfile fillProfileProperties(GameProfile profile, boolean requireSecure) throws Throwable;
 
@@ -85,25 +83,19 @@ public interface NMSBridge {
 
     public BoundingBox getCollisionBox(Block block);
 
-    public default BoundingBox getCollisionBox(Object blockdata) {
-        return BoundingBox.ONE;
-    }
-
     public default Map<String, Object> getComponentMap(ItemStack item) {
         return item.getItemMeta().serialize();
     }
 
     public Location getDestination(Entity entity);
 
-    public float getForwardBackwardMovement(Entity entity);
-
     public GameProfileRepository getGameProfileRepository();
 
     public float getHeadYaw(Entity entity);
 
-    public List<EntityMetadataValue> getMetadata(Entity entity);
+    public float getHorizontalMovement(Entity entity);
 
-    public float getMovementSpeed(Entity entity);
+    public NPC getNPC(Entity entity);
 
     public EntityPacketTracker getPacketTracker(Entity entity);
 
@@ -121,6 +113,8 @@ public interface NMSBridge {
 
     public Entity getSource(BlockCommandSender sender);
 
+    public float getSpeedFor(NPC npc);
+
     public float getStepHeight(Entity entity);
 
     public TargetNavigator getTargetNavigator(Entity handle, Entity target, NavigatorParameters parameters);
@@ -131,13 +125,13 @@ public interface NMSBridge {
 
     public Entity getVehicle(Entity entity);
 
+    public float getVerticalMovement(Entity entity);
+
     public default Collection<Player> getViewingPlayers(Entity entity) {
-        return entity.getTrackedBy();
+        return ((Player) entity).getTrackedBy();
     }
 
     public double getWidth(Entity entity);
-
-    public float getXZMovement(Entity entity);
 
     public float getYaw(Entity entity);
 
@@ -152,11 +146,10 @@ public interface NMSBridge {
 
     public boolean isSolid(Block in);
 
-    public default boolean isSprinting(Entity entity) {
-        return entity instanceof Player ? ((Player) entity).isSprinting() : false;
-    }
-
     public boolean isValid(Entity entity);
+
+    public default void linkTextInteraction(Player player, Entity interaction, Entity mount, double height) {
+    }
 
     public void load(CommandManager commands);
 
@@ -166,21 +159,20 @@ public interface NMSBridge {
 
     public void look(Entity entity, Location to, boolean headOnly, boolean immediate);
 
-    public default void markPoseDirty(Entity tracker) {
-    }
-
     public void mount(Entity entity, Entity passenger);
 
+    public default void onPlayerInfoAdd(Player player, Object source, Function<UUID, MirrorTrait> mirrorTraits) {
+    }
+
     public InventoryView openAnvilInventory(Player player, Inventory anvil, String title);
+
+    public void openHorseInventory(Tameable horse, Player equipper);
 
     public void playAnimation(PlayerAnimation animation, Player player, Iterable<Player> to);
 
     public Runnable playerTicker(NPC npc, Player entity);
 
-    public default void positionInteractionText(Player player, Entity interaction, Entity mount, double height) {
-    }
-
-    public void registerEntityClass(Class<?> clazz, Object type);
+    public void registerEntityClass(Class<?> clazz);
 
     public void remove(Entity entity);
 
@@ -192,11 +184,7 @@ public interface NMSBridge {
 
     public void replaceTrackerEntry(Entity entity);
 
-    public void sendCameraPacket(Player player, Entity entity);
-
-    public void sendComponent(Player player, Object component);
-
-    public void sendPositionUpdate(Entity from, Iterable<Player> to, boolean position, Float bodyYaw, Float pitch,
+    public void sendPositionUpdate(Entity from, Collection<Player> to, boolean position, Float bodyYaw, Float pitch,
             Float headYaw);
 
     public boolean sendTabListAdd(Player recipient, Player listPlayer);
@@ -235,12 +223,7 @@ public interface NMSBridge {
 
     public void setHeadYaw(Entity entity, float yaw);
 
-    public default void setKnockbackResistance(LivingEntity entity, double d) {
-        AttributeInstance ai = entity.getAttribute(Attribute.KNOCKBACK_RESISTANCE);
-        if (ai != null) {
-            ai.setBaseValue(d);
-        }
-    }
+    public void setKnockbackResistance(LivingEntity entity, double d);
 
     public void setLocationDirectly(Entity entity, Location location);
 
@@ -248,18 +231,11 @@ public interface NMSBridge {
         throw new UnsupportedOperationException();
     }
 
-    public default void setMannequinDescription(Entity mannequin, Object component) {
-    }
-
     public void setNavigationTarget(Entity handle, Entity target, float speed);
 
     public void setNavigationType(Entity entity, MinecraftNavigationType type);
 
     public void setNoGravity(Entity entity, boolean nogravity);
-
-    public void setNoPhysics(Entity entity, boolean nophysics);
-
-    public void setOpWithoutSaving(Player player, boolean op);
 
     public default void setPandaSitting(Entity entity, boolean sitting) {
         throw new UnsupportedOperationException();
@@ -291,7 +267,9 @@ public interface NMSBridge {
     public void setSitting(Tameable tameable, boolean sitting);
 
     public default void setSneaking(Entity entity, boolean sneaking) {
-        if (entity instanceof Player) {
+        if (entity instanceof NPCHolder) {
+            ((NPCHolder) entity).getNPC().getOrAddTrait(SneakTrait.class).setSneaking(sneaking);
+        } else if (entity instanceof Player) {
             ((Player) entity).setSneaking(sneaking);
         }
     }

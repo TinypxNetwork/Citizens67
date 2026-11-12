@@ -1,46 +1,34 @@
 package net.citizensnpcs.npc.skin;
 
-import java.util.Locale;
 import java.util.Set;
 
-import org.bukkit.NamespacedKey;
-import org.bukkit.entity.LivingEntity;
+import org.bukkit.entity.Player;
 
 import com.mojang.authlib.GameProfile;
 
 import net.citizensnpcs.npc.ai.NPCHolder;
 import net.citizensnpcs.trait.SkinLayers;
 import net.citizensnpcs.trait.SkinTrait;
-import net.citizensnpcs.util.SkinProperty;
 
 /**
  * Interface for player entities that are skinnable.
  */
 public interface SkinnableEntity extends NPCHolder {
-    void applyTexture(SkinProperty property);
-
-    /**
-     * Get entity game profile.
-     */
-    GameProfile gameProfile();
 
     /**
      * Get the bukkit entity.
      */
-    default LivingEntity getBukkitEntity() {
-        return (LivingEntity) getNPC().getEntity();
-    }
+    Player getBukkitEntity();
+
+    /**
+     * Get entity game profile.
+     */
+    GameProfile getProfile();
 
     /**
      * Get the name of the player whose skin the NPC uses.
      */
-    default String getSkinName() {
-        String skinName = getNPC().getOrAddTrait(SkinTrait.class).getSkinName();
-        if (skinName == null) {
-            skinName = getNPC().getName();
-        }
-        return skinName.toLowerCase(Locale.ROOT);
-    }
+    String getSkinName();
 
     /**
      * Get the entities skin packet tracker.
@@ -63,41 +51,30 @@ public interface SkinnableEntity extends NPCHolder {
         setSkinFlags(SkinLayers.Layer.toByte(flags));
     }
 
-    default void setSkinPatch(PlayerSkinModelType type, NamespacedKey body, NamespacedKey cape, NamespacedKey elytra) {
-    }
+    /**
+     * Set the name of the player whose skin the NPC uses.
+     *
+     * <p>
+     * Setting the skin name automatically updates and respawn the NPC.
+     * </p>
+     *
+     * @see SkinTrait#setSkinName(String)
+     *
+     * @param name
+     *            The skin name.
+     */
+    @Deprecated
+    void setSkinName(String name);
 
-    public static interface ForwardingSkinnableEntity extends SkinnableEntity {
-        @Override
-        default void applyTexture(SkinProperty property) {
-            getUnderlying().applyTexture(property);
-        }
+    /**
+     * @see SkinTrait#setSkinName(String,boolean)
+     */
+    @Deprecated
+    void setSkinName(String skinName, boolean forceUpdate);
 
-        @Override
-        default GameProfile gameProfile() {
-            return getUnderlying().gameProfile();
-        }
-
-        @Override
-        default SkinPacketTracker getSkinTracker() {
-            return getUnderlying().getSkinTracker();
-        }
-
-        SkinnableEntity getUnderlying();
-
-        @Override
-        default void setSkinFlags(byte flags) {
-            getUnderlying().setSkinFlags(flags);
-        }
-
-        @Override
-        default void setSkinPatch(PlayerSkinModelType type, NamespacedKey body, NamespacedKey cape,
-                NamespacedKey elytra) {
-            getUnderlying().setSkinPatch(type, body, cape, elytra);
-        }
-    }
-
-    public enum PlayerSkinModelType {
-        SLIM,
-        WIDE;
-    }
+    /**
+     * @see SkinTrait#setSkinPersistent(String,String,String)
+     */
+    @Deprecated
+    void setSkinPersistent(String skinName, String signature, String data);
 }

@@ -1,6 +1,5 @@
 package net.citizensnpcs.trait.shop;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
 
@@ -11,18 +10,19 @@ import org.bukkit.entity.HumanEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 
+import com.google.common.collect.Lists;
+
 import net.citizensnpcs.api.gui.InputMenus;
 import net.citizensnpcs.api.gui.InventoryMenuPage;
 import net.citizensnpcs.api.gui.Menu;
 import net.citizensnpcs.api.gui.MenuContext;
 import net.citizensnpcs.api.persistence.Persist;
-import net.citizensnpcs.trait.ShopTrait.NPCShopStorage;
 import net.citizensnpcs.util.InventoryMultiplexer;
 import net.citizensnpcs.util.Util;
 
 public class CommandAction extends NPCShopAction {
     @Persist
-    public List<String> commands = new ArrayList<>();
+    public List<String> commands = Lists.newArrayList();
     @Persist
     public boolean op = false;
     @Persist
@@ -54,7 +54,7 @@ public class CommandAction extends NPCShopAction {
     }
 
     @Override
-    public Transaction grant(NPCShopStorage storage, Entity entity, InventoryMultiplexer inventory, int repeats) {
+    public Transaction grant(Entity entity, InventoryMultiplexer inventory, int repeats) {
         if (!(entity instanceof Player))
             return Transaction.fail();
         Player player = (Player) entity;
@@ -70,7 +70,7 @@ public class CommandAction extends NPCShopAction {
     }
 
     @Override
-    public Transaction take(NPCShopStorage storage, Entity entity, InventoryMultiplexer inventory, int repeats) {
+    public Transaction take(Entity entity, InventoryMultiplexer inventory, int repeats) {
         if (!(entity instanceof Player))
             return Transaction.fail();
         Player player = (Player) entity;
@@ -151,11 +151,6 @@ public class CommandAction extends NPCShopAction {
     }
 
     public static class CommandActionGUI implements GUI {
-        @Override
-        public boolean canUse(HumanEntity entity) {
-            return entity.hasPermission("citizens.npc.shop.editor.actions.edit-command");
-        }
-
         @Override
         public InventoryMenuPage createEditor(NPCShopAction previous, Consumer<NPCShopAction> callback) {
             return new CommandActionEditor(previous == null ? new CommandAction() : (CommandAction) previous, callback);

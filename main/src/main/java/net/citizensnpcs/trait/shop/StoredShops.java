@@ -1,11 +1,9 @@
 package net.citizensnpcs.trait.shop;
 
-import java.util.HashMap;
 import java.util.Map;
 
-import com.google.common.primitives.Ints;
+import com.google.common.collect.Maps;
 
-import net.citizensnpcs.api.CitizensAPI;
 import net.citizensnpcs.api.persistence.Persist;
 import net.citizensnpcs.api.persistence.PersistenceLoader;
 import net.citizensnpcs.api.util.Messaging;
@@ -15,17 +13,13 @@ import net.citizensnpcs.trait.ShopTrait.NPCShop;
 
 public class StoredShops {
     @Persist(value = "global", reify = true)
-    public Map<String, NPCShop> globalShops = new HashMap<>();
+    public Map<String, NPCShop> globalShops = Maps.newHashMap();
     @Persist(value = "npc", reify = true)
-    public Map<String, NPCShop> npcShops = new HashMap<>();
+    public Map<String, NPCShop> npcShops = Maps.newHashMap();
     private final Storage storage;
 
     public StoredShops(YamlStorage storage) {
         this.storage = storage;
-    }
-
-    public NPCShop addNamedShop(String string) {
-        return globalShops.computeIfAbsent(string, s -> new NPCShop(s));
     }
 
     public void deleteShop(NPCShop shop) {
@@ -40,16 +34,13 @@ public class StoredShops {
     }
 
     public NPCShop getGlobalShop(String name) {
-        return globalShops.get(name);
+        return globalShops.computeIfAbsent(name, NPCShop::new);
     }
 
     public NPCShop getShop(String name) {
-        Integer id = Ints.tryParse(name);
-        if (id != null && CitizensAPI.getNPCRegistry().getById(id) != null) {
-            name = CitizensAPI.getNPCRegistry().getById(id).getUniqueId().toString();
-        }
-        NPCShop shop = npcShops.get(name);
-        return shop == null ? getGlobalShop(name) : shop;
+        if (npcShops.containsKey(name))
+            return npcShops.get(name);
+        return getGlobalShop(name);
     }
 
     public void load() {
@@ -61,10 +52,6 @@ public class StoredShops {
     }
 
     public void saveToDisk() {
-        storage.saveAsync();
-    }
-
-    public void saveToDiskImmediate() {
         storage.save();
     }
 

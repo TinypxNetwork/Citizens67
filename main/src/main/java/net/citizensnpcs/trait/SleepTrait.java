@@ -22,13 +22,8 @@ public class SleepTrait extends Trait {
         super("sleeptrait");
     }
 
-    public boolean isSleeping() {
-        return sleeping;
-    }
-
     @Override
     public void onDespawn() {
-        npc.getOrAddTrait(EntityPoseTrait.class).setPose(null);
         sleeping = false;
     }
 
@@ -43,10 +38,9 @@ public class SleepTrait extends Trait {
             }
             return;
         }
-        if (sleeping)
-            return;
         if (npc.getEntity() instanceof Player) {
             Player player = (Player) npc.getEntity();
+            npc.getOrAddTrait(EntityPoseTrait.class).setPose(EntityPose.SLEEPING);
             if (SUPPORT_BLOCKDATA) {
                 try {
                     if (at.getBlock().getBlockData() instanceof Bed || at.getBlock().getState() instanceof Bed) {
@@ -61,7 +55,6 @@ public class SleepTrait extends Trait {
             } else {
                 NMS.sleep(player, true);
             }
-            npc.getOrAddTrait(EntityPoseTrait.class).setPose(EntityPose.SLEEPING);
             sleeping = true;
         } else if (npc.getEntity() instanceof Villager) {
             sleeping = ((Villager) npc.getEntity()).sleep(at);

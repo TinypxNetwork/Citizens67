@@ -5,6 +5,8 @@ import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Villager;
 import org.bukkit.entity.Villager.Profession;
 
+import com.google.common.base.Joiner;
+
 import net.citizensnpcs.api.command.Command;
 import net.citizensnpcs.api.command.CommandContext;
 import net.citizensnpcs.api.command.Flag;
@@ -43,13 +45,13 @@ public class VillagerTrait extends Trait {
 
     @Override
     public void run() {
-        if (!(npc.getCosmeticEntity() instanceof Villager))
+        if (!(npc.getEntity() instanceof Villager))
             return;
         if (type != null) {
-            ((Villager) npc.getCosmeticEntity()).setVillagerType(type);
+            ((Villager) npc.getEntity()).setVillagerType(type);
         }
         level = Math.min(5, Math.max(1, level));
-        ((Villager) npc.getCosmeticEntity()).setVillagerLevel(level);
+        ((Villager) npc.getEntity()).setVillagerLevel(level);
     }
 
     public void setLevel(int level) {
@@ -69,7 +71,7 @@ public class VillagerTrait extends Trait {
             max = 1,
             flags = "s",
             permission = "citizens.npc.villager")
-    @Requirements(selected = true, ownership = true, cosmeticTypes = EntityType.VILLAGER)
+    @Requirements(selected = true, ownership = true, types = EntityType.VILLAGER)
     public static void villager(CommandContext args, CommandSender sender, NPC npc,
             @Flag("profession") Profession profession, @Flag("type") Villager.Type type, @Flag("level") Integer level)
             throws CommandException {
@@ -91,7 +93,7 @@ public class VillagerTrait extends Trait {
         if (args.hasValueFlag("profession")) {
             if (profession == null)
                 throw new CommandException(Messages.INVALID_PROFESSION, args.getFlag("profession"),
-                        Util.listValuesPretty(VillagerProfessionEnum.values()));
+                        Joiner.on(',').join(VillagerProfessionEnum.values()));
             npc.getOrAddTrait(VillagerProfession.class).setProfession(profession);
             output += " " + Messaging.tr(Messages.PROFESSION_SET, npc.getName(), args.getFlag("profession"));
         }

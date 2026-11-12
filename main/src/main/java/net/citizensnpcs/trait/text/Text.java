@@ -1,19 +1,19 @@
 package net.citizensnpcs.trait.text;
 
-import java.time.Duration;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.UUID;
-import java.util.regex.Pattern;
 
 import org.bukkit.command.CommandSender;
 import org.bukkit.conversations.Conversation;
 import org.bukkit.conversations.ConversationFactory;
 import org.bukkit.entity.Player;
+import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
+
+import com.google.common.collect.Maps;
 
 import net.citizensnpcs.Settings.Setting;
 import net.citizensnpcs.api.CitizensAPI;
@@ -21,13 +21,11 @@ import net.citizensnpcs.api.ai.speech.SpeechContext;
 import net.citizensnpcs.api.event.NPCRightClickEvent;
 import net.citizensnpcs.api.persistence.Persist;
 import net.citizensnpcs.api.trait.Trait;
-import net.citizensnpcs.api.trait.TraitEventHandler;
 import net.citizensnpcs.api.trait.TraitName;
 import net.citizensnpcs.api.util.DataKey;
 import net.citizensnpcs.api.util.Messaging;
 import net.citizensnpcs.api.util.Paginator;
 import net.citizensnpcs.api.util.Placeholders;
-import net.citizensnpcs.api.util.SpigotUtil;
 import net.citizensnpcs.editor.Editor;
 import net.citizensnpcs.trait.HologramTrait;
 import net.citizensnpcs.util.Messages;
@@ -38,7 +36,7 @@ import net.citizensnpcs.util.Util;
  */
 @TraitName("text")
 public class Text extends Trait implements Runnable, Listener {
-    private final Map<UUID, Long> cooldowns = new HashMap<>();
+    private final Map<UUID, Long> cooldowns = Maps.newHashMap();
     private int currentIndex;
     @Persist
     private int delay = -1;
@@ -49,16 +47,12 @@ public class Text extends Trait implements Runnable, Listener {
     private double range = Setting.DEFAULT_TALK_CLOSE_RANGE.asDouble();
     @Persist(value = "realistic-looking")
     private boolean realisticLooker = Setting.DEFAULT_REALISTIC_LOOKING.asBoolean();
-    @Persist(value = "send-text-to-chat")
-    private boolean sendTextToChat = true;
-    @Persist(value = "speech-bubble-duration")
-    private int speechBubbleDuration = Setting.DEFAULT_TEXT_SPEECH_BUBBLE_DURATION.asTicks();
     @Persist(value = "speech-bubbles")
     private boolean speechBubbles;
     @Persist(value = "talk-close")
     private boolean talkClose = Setting.DEFAULT_TALK_CLOSE.asBoolean();
     @Persist
-    private final List<String> text = new ArrayList<>();
+    private volatile List<String> text = new ArrayList<>();
 
     public Text() {
         super("text");
@@ -143,9 +137,9 @@ public class Text extends Trait implements Runnable, Listener {
         range = key.getDouble("range", Setting.DEFAULT_TALK_CLOSE_RANGE.asDouble());
     }
 
-    @TraitEventHandler
+    @EventHandler
     private void onRightClick(NPCRightClickEvent event) {
-        if (text.size() == 0)
+        if (!event.getNPC().equals(npc) || text.size() == 0)
             return;
         String localPattern = "default".equals(itemInHandPattern) ? Setting.TALK_ITEM.asString() : itemInHandPattern;
         if (Util.matchesItemInHand(event.getClicker(), localPattern) && !shouldTalkClose()) {
@@ -211,21 +205,12 @@ public class Text extends Trait implements Runnable, Listener {
         }
         if (speechBubbles) {
             HologramTrait trait = npc.getOrAddTrait(HologramTrait.class);
-            String replaced = Placeholders.replace(text.get(index), player, npc);
-            for (String line : NEWLINE_PATTERN.split(replaced)) {
-                trait.addTemporaryLine(line, speechBubbleDuration);
-            }
-        }
-        if (sendTextToChat) {
-            SpeechContext context = new SpeechContext(text.get(index), player);
-            context.setTalker(npc.getEntity());
-            npc.speak(context);
+            trait.addTemporaryLine(Placeholders.replace(text.get(index), player, npc),
+                    Setting.DEFAULT_TEXT_SPEECH_BUBBLE_DURATION.asTicks());
+        } else {
+            npc.getDefaultSpeechController().speak(new SpeechContext(text.get(index), player));
         }
         return true;
-    }
-
-    public boolean sendTextToChat() {
-        return sendTextToChat;
     }
 
     /**
@@ -252,14 +237,9 @@ public class Text extends Trait implements Runnable, Listener {
      * Set the range in blocks before text will be sent.
      *
      * @param range
-     *            Range blocks (or meters)
      */
     public void setRange(double range) {
         this.range = range;
-    }
-
-    public void setSpeechBubbleDuration(Duration duration) {
-        this.speechBubbleDuration = SpigotUtil.toTicks(duration);
     }
 
     /**
@@ -303,13 +283,6 @@ public class Text extends Trait implements Runnable, Listener {
     }
 
     /**
-     * Toggles sending text through chat
-     */
-    public boolean toggleSendTextToChat() {
-        return sendTextToChat = !sendTextToChat;
-    }
-
-    /**
      * Toggles using speech bubbles instead of messages.
      */
     public boolean toggleSpeechBubbles() {
@@ -331,6 +304,5 @@ public class Text extends Trait implements Runnable, Listener {
         return speechBubbles;
     }
 
-    private static final Pattern NEWLINE_PATTERN = Pattern.compile("<br>|\\n");
-    private static final Random RANDOM = Util.getFastRandom();
+    private static Random RANDOM = Util.getFastRandom();
 }

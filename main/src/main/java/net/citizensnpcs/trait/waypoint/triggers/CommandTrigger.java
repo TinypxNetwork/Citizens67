@@ -1,8 +1,6 @@
 package net.citizensnpcs.trait.waypoint.triggers;
 
-import java.util.ArrayList;
 import java.util.Collection;
-import java.util.List;
 
 import org.bukkit.Location;
 
@@ -14,8 +12,8 @@ import net.citizensnpcs.api.persistence.Persist;
 import net.citizensnpcs.util.Util;
 
 public class CommandTrigger implements WaypointTrigger {
-    @Persist
-    private List<String> commands = new ArrayList<>();
+    @Persist(required = true)
+    private Collection<String> commands = Lists.newArrayList();
 
     public CommandTrigger() {
     }

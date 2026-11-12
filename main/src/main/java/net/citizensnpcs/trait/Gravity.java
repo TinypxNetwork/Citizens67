@@ -9,7 +9,7 @@ import net.citizensnpcs.util.NMS;
  * Enable/disable Minecraft's gravity.
  */
 @TraitName("gravity")
-public class Gravity extends Trait {
+public class Gravity extends Trait implements Toggleable {
     @Persist("enabled")
     private boolean nogravity;
 
@@ -22,6 +22,16 @@ public class Gravity extends Trait {
             npc.getEntity().setVelocity(npc.getEntity().getVelocity().setY(0));
             NMS.setNoGravity(npc.getEntity(), nogravity);
         }
+    }
+
+    /**
+     * Set whether to disable gravity or not
+     *
+     * @param gravitate
+     *            true = disable gravity, false = enable gravity
+     */
+    public void gravitate(boolean gravitate) {
+        nogravity = gravitate;
     }
 
     public boolean hasGravity() {
@@ -40,13 +50,11 @@ public class Gravity extends Trait {
         NMS.setNoGravity(npc.getEntity(), nogravity);
     }
 
-    /**
-     * Set whether to have gravity or not
-     */
-    public void setHasGravity(boolean hasGravity) {
-        nogravity = !hasGravity;
+    public void setEnabled(boolean enabled) {
+        nogravity = enabled;
     }
 
+    @Override
     public boolean toggle() {
         nogravity = !nogravity;
         applyImmediately();

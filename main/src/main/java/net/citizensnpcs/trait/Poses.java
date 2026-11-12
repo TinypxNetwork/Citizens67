@@ -1,11 +1,12 @@
 package net.citizensnpcs.trait;
 
-import java.util.HashMap;
 import java.util.Map;
 
 import org.bukkit.Location;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.ConsoleCommandSender;
+
+import com.google.common.collect.Maps;
 
 import net.citizensnpcs.api.command.exception.CommandException;
 import net.citizensnpcs.api.event.SpawnReason;
@@ -26,7 +27,7 @@ import net.citizensnpcs.util.Pose;
 public class Poses extends Trait {
     @Persist
     private String defaultPose;
-    private final Map<String, Pose> poses = new HashMap<>();
+    private final Map<String, Pose> poses = Maps.newHashMap();
 
     public Poses() {
         super("poses");

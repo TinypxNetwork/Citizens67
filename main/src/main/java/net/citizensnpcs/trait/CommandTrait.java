@@ -1,11 +1,10 @@
 package net.citizensnpcs.trait;
 
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.EnumSet;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
@@ -50,7 +49,6 @@ import net.citizensnpcs.api.util.DataKey;
 import net.citizensnpcs.api.util.ItemStorage;
 import net.citizensnpcs.api.util.Messaging;
 import net.citizensnpcs.api.util.Placeholders;
-import net.citizensnpcs.api.util.SpigotUtil;
 import net.citizensnpcs.api.util.Translator;
 import net.citizensnpcs.trait.shop.ExperienceAction;
 import net.citizensnpcs.trait.shop.ItemAction;
@@ -64,33 +62,29 @@ import net.citizensnpcs.util.Util;
 public class CommandTrait extends Trait {
     @Persist(keyType = Integer.class)
     @DelegatePersistence(NPCCommandPersister.class)
-    private final Map<Integer, NPCCommand> commands = new HashMap<>();
+    private final Map<Integer, NPCCommand> commands = Maps.newHashMap();
     @Persist
     private double cost = -1;
     @Persist(keyType = CommandTraitError.class)
     private final Map<CommandTraitError, String> customErrorMessages = Maps.newEnumMap(CommandTraitError.class);
-    private final Map<String, Set<CommandTraitError>> executionErrors = new HashMap<>();
+    private final Map<String, Set<CommandTraitError>> executionErrors = Maps.newHashMap();
     @Persist
     private ExecutionMode executionMode = ExecutionMode.LINEAR;
     @Persist
     private int experienceCost = -1;
     @Persist(valueType = Long.class)
-    private final Map<String, Long> globalCooldowns = new HashMap<>();
-    @Persist(valueType = Integer.class)
-    private final Map<String, Integer> globalUses = new HashMap<>();
+    private final Map<String, Long> globalCooldowns = Maps.newHashMap();
     @Persist
     private boolean hideErrorMessages;
     @Persist
-    private final List<ItemStack> itemRequirements = new ArrayList<>();
+    private final List<ItemStack> itemRequirements = Lists.newArrayList();
     private int lastUsedId = -1;
+    @Persist
+    private boolean persistSequence = false;
     @Persist(keyType = UUID.class, reify = true, value = "cooldowns")
-    private final Map<UUID, PlayerNPCCommand> playerTracking = new HashMap<>();
-    @Persist("persistSequence")
-    private boolean rememberLastUsed = false;
+    private final Map<UUID, PlayerNPCCommand> playerTracking = Maps.newHashMap();
     @Persist
-    private final List<String> temporaryPermissions = new ArrayList<>();
-    @Persist
-    private int temporaryPermissionsDuration;
+    private final List<String> temporaryPermissions = Lists.newArrayList();
 
     public CommandTrait() {
         super("commandtrait");
@@ -105,7 +99,7 @@ public class CommandTrait extends Trait {
     private Transaction chargeCommandCosts(Player player, Hand hand, NPCCommand command) {
         if (player.hasPermission("citizens.npc.command.ignoreerrors.*"))
             return Transaction.success();
-        Collection<Transaction> txns = new ArrayList<>();
+        Collection<Transaction> txns = Lists.newArrayList();
         if (nonZeroOrNegativeOne(command.cost) && !player.hasPermission("citizens.npc.command.ignoreerrors.cost")) {
             Transaction action = new MoneyAction(command.cost).take(player, 1);
             if (!action.isPossible()) {
@@ -140,7 +134,7 @@ public class CommandTrait extends Trait {
         if (player.hasPermission("citizens.npc.command.ignoreerrors.*"))
             return Transaction.success();
 
-        Collection<Transaction> txns = new ArrayList<>();
+        Collection<Transaction> txns = Lists.newArrayList();
         if (nonZeroOrNegativeOne(cost) && !player.hasPermission("citizens.npc.command.ignoreerrors.cost")) {
             Transaction action = new MoneyAction(cost).take(player, 1);
             if (!action.isPossible()) {
@@ -175,7 +169,7 @@ public class CommandTrait extends Trait {
     }
 
     public void clearHistory(CommandTraitError which, UUID who) {
-        Collection<PlayerNPCCommand> toClear = new ArrayList<>();
+        Collection<PlayerNPCCommand> toClear = Lists.newArrayList();
         if (who != null) {
             toClear.add(playerTracking.get(who));
         } else {
@@ -214,8 +208,8 @@ public class CommandTrait extends Trait {
      * Send a brief description of the current state of the trait to the supplied {@link CommandSender}.
      */
     public void describe(CommandSender sender) {
-        List<NPCCommand> left = new ArrayList<>();
-        List<NPCCommand> right = new ArrayList<>();
+        List<NPCCommand> left = Lists.newArrayList();
+        List<NPCCommand> right = Lists.newArrayList();
         for (NPCCommand command : commands.values()) {
             if (command.hand == Hand.LEFT || command.hand == Hand.SHIFT_LEFT || command.hand == Hand.BOTH) {
                 left.add(command);
@@ -224,7 +218,7 @@ public class CommandTrait extends Trait {
                 right.add(command);
             }
         }
-        List<String> outputList = new ArrayList<>();
+        List<String> outputList = Lists.newArrayList();
         if (cost > 0) {
             outputList.add("Cost: " + StringHelper.wrap(cost));
         }
@@ -271,9 +265,6 @@ public class CommandTrait extends Trait {
         if (command.n > 0) {
             output += "[" + StringHelper.wrap(command.n) + " uses]";
         }
-        if (command.gn > 0) {
-            output += "[" + StringHelper.wrap(command.gn) + " global uses]";
-        }
         if (command.op) {
             output += " -o";
         }
@@ -311,7 +302,7 @@ public class CommandTrait extends Trait {
                 }
                 int max = -1;
                 if (executionMode == ExecutionMode.SEQUENTIAL || executionMode == ExecutionMode.CYCLE) {
-                    commandList.sort(Comparator.comparing(o1 -> o1.id));
+                    Collections.sort(commandList, Comparator.comparing(o1 -> o1.id));
                     max = commandList.size() > 0 ? commandList.get(commandList.size() - 1).id : -1;
                 }
                 if (executionMode == ExecutionMode.LINEAR) {
@@ -373,12 +364,7 @@ public class CommandTrait extends Trait {
                                 attachment.setPermission(permission, true);
                             }
                             command.run(npc, player);
-                            if (temporaryPermissionsDuration <= 0) {
-                                attachment.remove();
-                            } else {
-                                CitizensAPI.getScheduler().runEntityTaskLater(player, attachment::remove,
-                                        temporaryPermissionsDuration);
-                            }
+                            attachment.remove();
                             return;
                         }
                     }
@@ -387,11 +373,15 @@ public class CommandTrait extends Trait {
                 if (command.delay <= 0) {
                     runnable.run();
                 } else {
-                    CitizensAPI.getScheduler().runEntityTaskLater(player, runnable, command.delay);
+                    Bukkit.getScheduler().scheduleSyncDelayedTask(CitizensAPI.getPlugin(), runnable, command.delay);
                 }
             }
         };
-        CitizensAPI.getScheduler().checkedRunEntityTask(player, task);
+        if (Bukkit.isPrimaryThread()) {
+            task.run();
+        } else {
+            Bukkit.getScheduler().scheduleSyncDelayedTask(CitizensAPI.getPlugin(), task);
+        }
     }
 
     public double getCost() {
@@ -426,8 +416,8 @@ public class CommandTrait extends Trait {
         return Math.abs(value) > 0.0001 && Math.abs(-1 - value) > 0.0001;
     }
 
-    public boolean rememberLastUsed() {
-        return rememberLastUsed;
+    public boolean persistSequence() {
+        return persistSequence;
     }
 
     public void removeCommandById(int id) {
@@ -439,9 +429,9 @@ public class CommandTrait extends Trait {
         Collection<NPCCommand> commands = this.commands.values();
         for (Iterator<PlayerNPCCommand> itr = playerTracking.values().iterator(); itr.hasNext();) {
             PlayerNPCCommand playerCommand = itr.next();
-            playerCommand.pruneCooldowns(globalCooldowns, commands);
+            playerCommand.prune(globalCooldowns, commands);
             if (playerCommand.lastUsed.isEmpty() && playerCommand.nUsed.isEmpty()
-                    && (!rememberLastUsed || playerCommand.lastUsedId == -1)) {
+                    && (!persistSequence || playerCommand.lastUsedId == -1)) {
                 itr.remove();
             }
         }
@@ -487,22 +477,16 @@ public class CommandTrait extends Trait {
         hideErrorMessages = hide;
     }
 
-    public void setRememberLastUsed(boolean rememberLastUsed) {
-        this.rememberLastUsed = rememberLastUsed;
+    public void setPersistSequence(boolean persistSequence) {
+        this.persistSequence = persistSequence;
     }
 
     public void setTemporaryPermissions(List<String> permissions) {
-        setTemporaryPermissions(permissions, -1);
-    }
-
-    public void setTemporaryPermissions(List<String> permissions, int duration) {
         temporaryPermissions.clear();
         temporaryPermissions.addAll(permissions);
-        temporaryPermissionsDuration = duration;
     }
 
     public enum CommandTraitError {
-        GLOBAL_MAXIMUM_TIMES_USED(Setting.NPC_COMMAND_GLOBAL_MAXIMUM_TIMES_USED_MESSAGE),
         MAXIMUM_TIMES_USED(Setting.NPC_COMMAND_MAXIMUM_TIMES_USED_MESSAGE),
         MISSING_EXPERIENCE(Setting.NPC_COMMAND_NOT_ENOUGH_EXPERIENCE_MESSAGE),
         MISSING_ITEM(Setting.NPC_COMMAND_MISSING_ITEM_MESSAGE),
@@ -578,7 +562,7 @@ public class CommandTrait extends Trait {
 
         @Override
         public void onClose(HumanEntity player) {
-            List<ItemStack> requirements = new ArrayList<>();
+            List<ItemStack> requirements = Lists.newArrayList();
             for (ItemStack stack : inventory.getContents()) {
                 if (stack != null && stack.getType() != Material.AIR) {
                     requirements.add(stack);
@@ -601,20 +585,18 @@ public class CommandTrait extends Trait {
         int delay;
         int experienceCost = -1;
         int globalCooldown;
-        int gn;
         Hand hand;
         int id;
         List<ItemStack> itemCost;
         String key;
         int n;
-        boolean npc;
         boolean op;
         List<String> perms;
         boolean player;
 
         public NPCCommand(int id, String command, Hand hand, boolean player, boolean op, int cooldown,
-                List<String> perms, int n, int gn, int delay, int globalCooldown, double cost, int experienceCost,
-                List<ItemStack> itemCost, boolean npc) {
+                List<String> perms, int n, int delay, int globalCooldown, double cost, int experienceCost,
+                List<ItemStack> itemCost) {
             this.id = id;
             this.command = command;
             this.hand = hand;
@@ -622,14 +604,12 @@ public class CommandTrait extends Trait {
             this.op = op;
             this.cooldown = cooldown;
             this.perms = perms;
-            this.gn = gn;
             this.n = n;
             this.delay = delay;
             this.globalCooldown = globalCooldown;
             this.cost = cost;
             this.experienceCost = experienceCost;
             this.itemCost = itemCost;
-            this.npc = npc;
         }
 
         public String getEncodedKey() {
@@ -639,9 +619,6 @@ public class CommandTrait extends Trait {
         }
 
         public void run(NPC npc, Player clicker) {
-            if (this.npc && npc.getEntity() instanceof Player) {
-                clicker = (Player) npc.getEntity();
-            }
             Util.runCommand(npc, clicker, command, op, player);
         }
     }
@@ -653,13 +630,11 @@ public class CommandTrait extends Trait {
         int delay;
         int experienceCost = -1;
         int globalCooldown;
-        int gn = -1;
         Hand hand;
-        List<ItemStack> itemCost = new ArrayList<>();
+        List<ItemStack> itemCost = Lists.newArrayList();
         int n = -1;
-        boolean npc;
         boolean op;
-        List<String> perms = new ArrayList<>();
+        List<String> perms = Lists.newArrayList();
         boolean player;
 
         public NPCCommandBuilder(String command, Hand hand) {
@@ -678,8 +653,8 @@ public class CommandTrait extends Trait {
         }
 
         private NPCCommand build(int id) {
-            return new NPCCommand(id, command, hand, player, op, cooldown, perms, n, gn, delay, globalCooldown, cost,
-                    experienceCost, itemCost, npc);
+            return new NPCCommand(id, command, hand, player, op, cooldown, perms, n, delay, globalCooldown, cost,
+                    experienceCost, itemCost);
         }
 
         public NPCCommandBuilder command(String command) {
@@ -702,7 +677,7 @@ public class CommandTrait extends Trait {
         }
 
         public NPCCommandBuilder delay(Duration delay) {
-            this.delay = SpigotUtil.toTicks(delay);
+            this.delay = Util.toTicks(delay);
             return this;
         }
 
@@ -720,11 +695,6 @@ public class CommandTrait extends Trait {
             return this;
         }
 
-        public NPCCommandBuilder globalN(int n) {
-            this.gn = n;
-            return this;
-        }
-
         public NPCCommandBuilder itemCost(List<ItemStack> itemCost) {
             this.itemCost = itemCost;
             return this;
@@ -732,11 +702,6 @@ public class CommandTrait extends Trait {
 
         public NPCCommandBuilder n(int n) {
             this.n = n;
-            return this;
-        }
-
-        public NPCCommandBuilder npc(boolean npc) {
-            this.npc = npc;
             return this;
         }
 
@@ -757,61 +722,37 @@ public class CommandTrait extends Trait {
 
         @Override
         public NPCCommand create(DataKey root) {
-            List<String> perms = new ArrayList<>();
+            List<String> perms = Lists.newArrayList();
             for (DataKey key : root.getRelative("permissions").getIntegerSubKeys()) {
                 perms.add(key.getString(""));
             }
-            List<ItemStack> items = new ArrayList<>();
+            List<ItemStack> items = Lists.newArrayList();
             for (DataKey key : root.getRelative("itemCost").getIntegerSubKeys()) {
                 items.add(ItemStorage.loadItemStack(key));
             }
+            double cost = root.getDouble("cost", -1);
+            int exp = root.getInt("experienceCost", -1);
             return new NPCCommand(Integer.parseInt(root.name()), root.getString("command"),
-                    Hand.valueOf(root.getString("hand")), root.getBoolean("player", false),
-                    root.getBoolean("op", false), root.getInt("cooldown", 0), perms, root.getInt("n", 0),
-                    root.getInt("gn", 0), root.getInt("delay", 0), root.getInt("globalcooldown", 0),
-                    root.getDouble("cost", -1), root.getInt("experienceCost", -1), items,
-                    root.getBoolean("npc", false));
+                    Hand.valueOf(root.getString("hand")), Boolean.parseBoolean(root.getString("player")),
+                    Boolean.parseBoolean(root.getString("op")), root.getInt("cooldown"), perms, root.getInt("n"),
+                    root.getInt("delay"), root.getInt("globalcooldown"), cost, exp, items);
         }
 
         @Override
         public void save(NPCCommand instance, DataKey root) {
             root.setString("command", instance.command);
             root.setString("hand", instance.hand.name());
-            if (instance.player) {
-                root.setBoolean("player", instance.player);
-            }
-            if (instance.npc) {
-                root.setBoolean("npc", instance.npc);
-            }
-            if (instance.op) {
-                root.setBoolean("op", instance.op);
-            }
-            if (instance.cooldown > 0) {
-                root.setInt("cooldown", instance.cooldown);
-            }
-            if (instance.globalCooldown > 0) {
-                root.setInt("globalcooldown", instance.globalCooldown);
-            }
-            if (instance.n > 0) {
-                root.setInt("n", instance.n);
-            }
-            if (instance.gn > 0) {
-                root.setInt("gn", instance.gn);
-            }
-            if (instance.delay > 0) {
-                root.setInt("delay", instance.delay);
-            }
-            if (instance.cost != -1) {
-                root.setDouble("cost", instance.cost);
-            }
-            if (instance.experienceCost != -1) {
-                root.setInt("experienceCost", instance.experienceCost);
-            }
-            root.removeKey("permissions");
+            root.setBoolean("player", instance.player);
+            root.setBoolean("op", instance.op);
+            root.setInt("cooldown", instance.cooldown);
+            root.setInt("globalcooldown", instance.globalCooldown);
+            root.setInt("n", instance.n);
+            root.setInt("delay", instance.delay);
             for (int i = 0; i < instance.perms.size(); i++) {
                 root.setString("permissions." + i, instance.perms.get(i));
             }
-            root.removeKey("itemCost");
+            root.setDouble("cost", instance.cost);
+            root.setInt("experienceCost", instance.experienceCost);
             for (int i = 0; i < instance.itemCost.size(); i++) {
                 ItemStorage.saveItem(root.getRelative("itemCost." + i), instance.itemCost.get(i));
             }
@@ -820,13 +761,13 @@ public class CommandTrait extends Trait {
 
     private static class PlayerNPCCommand {
         @Persist(valueType = Long.class)
-        Map<String, Long> lastUsed = new HashMap<>();
+        Map<String, Long> lastUsed = Maps.newHashMap();
         @Persist
         Hand lastUsedHand;
         @Persist
         int lastUsedId = -1;
         @Persist
-        Map<String, Integer> nUsed = new HashMap<>();
+        Map<String, Integer> nUsed = Maps.newHashMap();
 
         public PlayerNPCCommand() {
         }
@@ -843,7 +784,7 @@ public class CommandTrait extends Trait {
             String commandKey = command.getEncodedKey();
             if (!player.hasPermission("citizens.npc.command.ignoreerrors.cooldown")
                     && lastUsed.containsKey(commandKey)) {
-                long deadline = lastUsed.get(commandKey).longValue()
+                long deadline = ((Number) lastUsed.get(commandKey)).longValue()
                         + (command.cooldown != 0 ? command.cooldown : globalDelay);
                 if (currentTimeSec < deadline) {
                     long seconds = deadline - currentTimeSec;
@@ -855,7 +796,7 @@ public class CommandTrait extends Trait {
             }
             if (!player.hasPermission("citizens.npc.command.ignoreerrors.globalcooldown") && command.globalCooldown > 0
                     && trait.globalCooldowns.containsKey(commandKey)) {
-                long deadline = trait.globalCooldowns.get(commandKey).longValue() + command.globalCooldown;
+                long deadline = ((Number) trait.globalCooldowns.get(commandKey)).longValue() + command.globalCooldown;
                 if (currentTimeSec < deadline) {
                     long seconds = deadline - currentTimeSec;
                     trait.sendErrorMessage(player, CommandTraitError.ON_GLOBAL_COOLDOWN,
@@ -879,20 +820,17 @@ public class CommandTrait extends Trait {
             if (command.n > 0) {
                 nUsed.put(commandKey, timesUsed + 1);
             }
-            if (command.gn > 0) {
-                trait.globalUses.put(commandKey, trait.globalUses.getOrDefault(commandKey, 0) + 1);
-            }
             lastUsedId = command.id;
             lastUsedHand = hand;
             return true;
         }
 
-        public void pruneCooldowns(Map<String, Long> globalCooldowns, Collection<NPCCommand> commands) {
+        public void prune(Map<String, Long> globalCooldowns, Collection<NPCCommand> commands) {
             long currentTimeSec = System.currentTimeMillis() / 1000;
-            Set<String> encodedCommandKeys = Sets.newHashSet();
+            Set<String> commandKeys = Sets.newHashSet();
             for (NPCCommand command : commands) {
                 String commandKey = command.getEncodedKey();
-                encodedCommandKeys.add(commandKey);
+                commandKeys.add(commandKey);
                 Number number = lastUsed.get(commandKey);
                 if (number != null && number.longValue() + (command.cooldown != 0 ? command.cooldown
                         : Setting.NPC_COMMAND_GLOBAL_COMMAND_COOLDOWN.asSeconds()) < currentTimeSec) {
@@ -906,15 +844,22 @@ public class CommandTrait extends Trait {
                 }
             }
             Set<String> diff = Sets.newHashSet(lastUsed.keySet());
-            diff.removeAll(encodedCommandKeys);
+            diff.removeAll(commandKeys);
             for (String key : diff) {
                 lastUsed.remove(key);
                 nUsed.remove(key);
             }
+            if (globalCooldowns != null) {
+                diff = Sets.newHashSet(globalCooldowns.keySet());
+                diff.removeAll(commandKeys);
+                for (String key : diff) {
+                    globalCooldowns.remove(key);
+                }
+            }
         }
 
         public static boolean requiresTracking(NPCCommand command) {
-            return command.globalCooldown > 0 || command.cooldown > 0 || command.n > 0 || command.gn > 0
+            return command.globalCooldown > 0 || command.cooldown > 0 || command.n > 0
                     || command.perms != null && command.perms.size() > 0
                     || Setting.NPC_COMMAND_GLOBAL_COMMAND_COOLDOWN.asSeconds() > 0;
         }

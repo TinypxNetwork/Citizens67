@@ -41,15 +41,19 @@ public class MountTrait extends Trait {
 
     @Override
     public void onDespawn() {
-        if (currentMount != null) {
+        if (NMS.getVehicle(npc.getEntity()) != null) {
             npc.getEntity().leaveVehicle();
-            currentMount = null;
         }
     }
 
     @Override
     public void onRemove() {
         onDespawn();
+    }
+
+    @Override
+    public void onSpawn() {
+        checkMounted();
     }
 
     @Override
@@ -75,7 +79,10 @@ public class MountTrait extends Trait {
     public void unmount() {
         if (currentMount == null)
             return;
-        onDespawn();
+        if (NMS.getVehicle(npc.getEntity()) != null) {
+            npc.getEntity().leaveVehicle();
+        }
         uuid = null;
+        currentMount = null;
     }
 }

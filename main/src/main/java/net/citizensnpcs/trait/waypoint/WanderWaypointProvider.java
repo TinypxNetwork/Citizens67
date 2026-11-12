@@ -1,9 +1,10 @@
 package net.citizensnpcs.trait.waypoint;
 
-import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Iterator;
 import java.util.List;
 
+import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Entity;
@@ -15,19 +16,20 @@ import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.metadata.FixedMetadataValue;
 
 import com.google.common.collect.ForwardingList;
+import com.google.common.collect.Lists;
 import com.sk89q.worldedit.bukkit.BukkitAdapter;
 import com.sk89q.worldguard.WorldGuard;
 import com.sk89q.worldguard.protection.managers.RegionManager;
 
 import ch.ethz.globis.phtree.PhTreeSolid;
 import net.citizensnpcs.api.CitizensAPI;
+import net.citizensnpcs.api.ai.GoalController.GoalEntry;
 import net.citizensnpcs.api.ai.goals.WanderGoal;
 import net.citizensnpcs.api.command.CommandContext;
 import net.citizensnpcs.api.npc.NPC;
 import net.citizensnpcs.api.persistence.Persist;
 import net.citizensnpcs.api.util.DataKey;
 import net.citizensnpcs.api.util.Messaging;
-import net.citizensnpcs.api.util.SpigotUtil;
 import net.citizensnpcs.util.Messages;
 import net.citizensnpcs.util.Util;
 
@@ -44,15 +46,15 @@ public class WanderWaypointProvider implements WaypointProvider {
     private boolean pathfind = true;
     private boolean paused;
     @Persist
-    private final List<Location> regionCentres = new ArrayList<>();
+    private final List<Location> regionCentres = Lists.newArrayList();
     private PhTreeSolid<Boolean> tree = PhTreeSolid.create(3);
     @Persist
     private String worldguardRegion;
     private Object worldguardRegionCache;
     @Persist
-    private int xrange = 25;
+    private int xrange = DEFAULT_XRANGE;
     @Persist
-    private int yrange = 3;
+    private int yrange = DEFAULT_YRANGE;
 
     public void addRegionCentre(Location centre) {
         regionCentres.add(centre);
@@ -110,19 +112,17 @@ public class WanderWaypointProvider implements WaypointProvider {
                         recalculateTree();
                     } catch (NumberFormatException ex) {
                     }
-                    CitizensAPI.getScheduler().runTask(
+                    Bukkit.getScheduler().scheduleSyncDelayedTask(CitizensAPI.getPlugin(),
                             () -> Messaging.sendTr(sender, Messages.WANDER_WAYPOINTS_RANGE_SET, xrange, yrange));
                 } else if (message.startsWith("regions")) {
                     event.setCancelled(true);
                     editingRegions = !editingRegions;
-                    CitizensAPI.getScheduler().runTask(() -> {
+                    Bukkit.getScheduler().scheduleSyncDelayedTask(CitizensAPI.getPlugin(), () -> {
                         if (editingRegions) {
                             for (Location regionCentre : regionCentres) {
-                                CitizensAPI.getScheduler().runRegionTask(regionCentre, () -> {
-                                    Entity entity = markers.createMarker(regionCentre, regionCentre);
-                                    entity.setMetadata("wandermarker",
-                                            new FixedMetadataValue(CitizensAPI.getPlugin(), regionCentre));
-                                });
+                                Entity entity = markers.createMarker(regionCentre, regionCentre);
+                                entity.setMetadata("wandermarker",
+                                        new FixedMetadataValue(CitizensAPI.getPlugin(), regionCentre));
                             }
                             Messaging.sendTr(sender, Messages.WANDER_WAYPOINTS_REGION_EDITING_START);
                         } else {
@@ -132,19 +132,14 @@ public class WanderWaypointProvider implements WaypointProvider {
                     });
                 } else if (message.startsWith("delay")) {
                     event.setCancelled(true);
-                    setDelay(SpigotUtil.parseTicks(message.split(" ")[1]));
-                    CitizensAPI.getScheduler()
-                            .runTask(() -> Messaging.sendTr(sender, Messages.WANDER_WAYPOINTS_DELAY_SET, delay));
+                    setDelay(Util.parseTicks(message.split(" ")[1]));
+                    Bukkit.getScheduler().scheduleSyncDelayedTask(CitizensAPI.getPlugin(),
+                            () -> Messaging.sendTr(sender, Messages.WANDER_WAYPOINTS_DELAY_SET, delay));
                 } else if (message.startsWith("worldguardregion")) {
                     event.setCancelled(true);
-                    CitizensAPI.getScheduler().runTask(() -> {
+                    Bukkit.getScheduler().scheduleSyncDelayedTask(CitizensAPI.getPlugin(), () -> {
                         Object region = null;
                         String regionId = message.replace("worldguardregion", "").trim();
-                        if (regionId.isEmpty()) {
-                            setWorldGuardRegion(null);
-                            Messaging.sendTr(sender, Messages.WANDER_WAYPOINTS_WORLDGUARD_REGION_SET, "");
-                            return;
-                        }
                         try {
                             RegionManager manager = WorldGuard.getInstance().getPlatform().getRegionContainer()
                                     .get(BukkitAdapter.adapt(npc.getStoredLocation().getWorld()));
@@ -157,11 +152,11 @@ public class WanderWaypointProvider implements WaypointProvider {
                             return;
                         }
                         setWorldGuardRegion(regionId);
-                        Messaging.sendTr(sender, Messages.WANDER_WAYPOINTS_WORLDGUARD_REGION_SET, regionId);
+                        Messaging.sendErrorTr(sender, Messages.WANDER_WAYPOINTS_WORLDGUARD_REGION_SET, regionId);
                     });
                 } else if (message.startsWith("pathfind")) {
                     event.setCancelled(true);
-                    CitizensAPI.getScheduler().runTask(() -> {
+                    Bukkit.getScheduler().scheduleSyncDelayedTask(CitizensAPI.getPlugin(), () -> {
                         pathfind = !pathfind;
                         if (currentGoal != null) {
                             currentGoal.setPathfind(pathfind);
@@ -262,7 +257,7 @@ public class WanderWaypointProvider implements WaypointProvider {
         if (currentGoal == null)
             return;
         currentGoal.pause();
-        npc.getDefaultBehaviorController().removeBehavior(currentGoal);
+        npc.getDefaultGoalController().removeGoal(currentGoal);
         currentGoal = null;
     }
 
@@ -276,10 +271,14 @@ public class WanderWaypointProvider implements WaypointProvider {
             if (paused) {
                 currentGoal.pause();
             }
-        } else {
-            npc.getDefaultBehaviorController().removeBehavior(currentGoal);
         }
-        npc.getDefaultBehaviorController().addBehavior(currentGoal);
+        Iterator<GoalEntry> itr = npc.getDefaultGoalController().iterator();
+        while (itr.hasNext()) {
+            if (itr.next() instanceof WanderGoal) {
+                itr.remove();
+            }
+        }
+        npc.getDefaultGoalController().addGoal(currentGoal, 1);
     }
 
     private void recalculateTree() {
@@ -377,4 +376,7 @@ public class WanderWaypointProvider implements WaypointProvider {
             return val;
         }
     }
+
+    private static int DEFAULT_XRANGE = 25;
+    private static int DEFAULT_YRANGE = 3;
 }

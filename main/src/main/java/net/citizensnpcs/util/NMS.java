@@ -5,11 +5,11 @@ import java.lang.invoke.MethodHandles;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -18,12 +18,10 @@ import java.util.stream.Collectors;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
-import org.bukkit.Registry;
 import org.bukkit.Sound;
-import org.bukkit.attribute.Attributable;
+import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.block.Block;
-import org.bukkit.block.data.BlockData;
 import org.bukkit.command.BlockCommandSender;
 import org.bukkit.entity.Enderman;
 import org.bukkit.entity.Entity;
@@ -37,22 +35,19 @@ import org.bukkit.event.entity.CreatureSpawnEvent.SpawnReason;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryView;
 import org.bukkit.inventory.ItemStack;
-import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.inventory.meta.SkullMeta;
 import org.bukkit.scoreboard.Team;
 import org.bukkit.util.Vector;
-import org.slf4j.helpers.NOPLogger;
 
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Iterables;
+import com.google.common.collect.Lists;
 import com.mojang.authlib.GameProfile;
-import com.mojang.authlib.GameProfileRepository;
 import com.mojang.authlib.ProfileLookupCallback;
-import com.mojang.authlib.minecraft.client.MinecraftClient;
 
+import net.citizensnpcs.Settings.Setting;
 import net.citizensnpcs.api.CitizensAPI;
 import net.citizensnpcs.api.ai.NavigatorParameters;
-import net.citizensnpcs.api.astar.pathfinder.MinecraftBlockExaminer;
+import net.citizensnpcs.api.astar.pathfinder.SwimmingExaminer;
 import net.citizensnpcs.api.command.CommandManager;
 import net.citizensnpcs.api.command.exception.CommandException;
 import net.citizensnpcs.api.event.NPCKnockbackEvent;
@@ -62,17 +57,16 @@ import net.citizensnpcs.api.npc.NPC;
 import net.citizensnpcs.api.util.BoundingBox;
 import net.citizensnpcs.api.util.EntityDim;
 import net.citizensnpcs.api.util.Messaging;
-import net.citizensnpcs.api.util.SpigotUtil;
 import net.citizensnpcs.api.util.SpigotUtil.InventoryViewAPI;
 import net.citizensnpcs.npc.ai.MCNavigationStrategy.MCNavigator;
 import net.citizensnpcs.npc.ai.MCTargetStrategy.TargetNavigator;
 import net.citizensnpcs.npc.ai.NPCHolder;
 import net.citizensnpcs.trait.EntityPoseTrait.EntityPose;
+import net.citizensnpcs.trait.MirrorTrait;
 import net.citizensnpcs.trait.PacketNPC;
 import net.citizensnpcs.trait.versioned.ArmadilloTrait.ArmadilloState;
 import net.citizensnpcs.trait.versioned.CamelTrait.CamelPose;
 import net.citizensnpcs.trait.versioned.SnifferTrait.SnifferState;
-import net.citizensnpcs.util.EntityPacketTracker.PacketBundler;
 
 public class NMS {
     private NMS() {
@@ -88,13 +82,12 @@ public class NMS {
         BRIDGE.activate(entity);
     }
 
-    public static void addEntityToWorld(Entity entity, SpawnReason custom, Consumer<Boolean> callback) {
-        BRIDGE.addEntityToWorld(entity, custom, callback);
+    public static boolean addEntityToWorld(org.bukkit.entity.Entity entity, SpawnReason custom) {
+        return BRIDGE.addEntityToWorld(entity, custom);
     }
 
-    public static void addOrRemoveFromPlayerList(Entity entity, boolean remove) {
-        CitizensAPI.getScheduler().checkedRunRegionTask(entity.getLocation(),
-                () -> BRIDGE.addOrRemoveFromPlayerList(entity, remove));
+    public static void addOrRemoveFromPlayerList(org.bukkit.entity.Entity entity, boolean remove) {
+        BRIDGE.addOrRemoveFromPlayerList(entity, remove);
     }
 
     public static void attack(LivingEntity attacker, LivingEntity bukkitTarget) {
@@ -130,11 +123,15 @@ public class NMS {
             Consumer<NPCKnockbackEvent> cb) {
         if (npc.getEntity() == null)
             return;
-        if (SUPPORTS_ATTRIBUTABLE && npc.getEntity() instanceof Attributable) {
-            AttributeInstance attribute = ((Attributable) npc.getEntity()).getAttribute(SpigotUtil
-                    .getRegistryValue(Registry.ATTRIBUTE, "generic.knockback_resistance", "knockback_resistance"));
-            if (attribute != null) {
-                strength *= 1 - attribute.getValue();
+        if (SUPPORT_KNOCKBACK_RESISTANCE && npc.getEntity() instanceof LivingEntity) {
+            try {
+                AttributeInstance attribute = ((LivingEntity) npc.getEntity())
+                        .getAttribute(Attribute.GENERIC_KNOCKBACK_RESISTANCE);
+                if (attribute != null) {
+                    strength *= 1 - attribute.getValue();
+                }
+            } catch (Throwable t) {
+                SUPPORT_KNOCKBACK_RESISTANCE = false;
             }
         }
         Vector vector = npc.getEntity().getVelocity();
@@ -157,56 +154,20 @@ public class NMS {
         BRIDGE.cancelMoveDestination(entity);
     }
 
-    public static boolean canNavigateTo(Entity entity, Location dest, NavigatorParameters params) {
-        return BRIDGE.canNavigateTo(entity, dest, params);
-    }
-
-    public static void clearCustomNBT(ItemMeta meta) {
-        if (CUSTOM_NBT_TAG_MISSING)
-            return;
-        if (CUSTOM_NBT_TAG == null) {
-            Class<?> clazz = meta.getClass();
-            while (!clazz.getName().contains("CraftMetaItem")) {
-                clazz = clazz.getSuperclass();
-            }
-            CUSTOM_NBT_TAG = getSetter(clazz, "customTag");
-            if (CUSTOM_NBT_TAG == null) {
-                CUSTOM_NBT_TAG_MISSING = true;
-                return;
-            }
-        }
-        try {
-            CUSTOM_NBT_TAG.invoke(meta, null);
-        } catch (Throwable e) {
-            e.printStackTrace();
-        }
-    }
-
     public static Iterable<Object> createBundlePacket(List<Object> packets) {
         return BRIDGE.createBundlePacket(packets);
-    }
-
-    public static EntityPacketTracker createPacketTracker(Entity entity) {
-        return createPacketTracker(entity, new PacketBundler());
-    }
-
-    public static EntityPacketTracker createPacketTracker(Entity entity, PacketBundler bundler) {
-        return BRIDGE.createPacketTracker(entity, bundler);
     }
 
     /*
      * Yggdrasil's default implementation of this method silently fails instead of throwing
      * an Exception like it should.
      */
+
     public static GameProfile fillProfileProperties(GameProfile profile, boolean requireSecure) throws Throwable {
         return BRIDGE.fillProfileProperties(profile, requireSecure);
     }
 
     public static void findProfilesByNames(String[] names, ProfileLookupCallback cb) {
-        if (SUPPORTS_FIND_PROFILES_BY_NAME) {
-            BRIDGE.getGameProfileRepository().findProfilesByNames(names, cb);
-            return;
-        }
         if (FIND_PROFILES_BY_NAMES == null) {
             try {
                 Class<?> agentClass = Class.forName("com.mojang.authlib.Agent");
@@ -234,7 +195,7 @@ public class NMS {
         return BRIDGE.getBossBar(entity);
     }
 
-    public static BoundingBox getBoundingBox(Entity handle) {
+    public static BoundingBox getBoundingBox(org.bukkit.entity.Entity handle) {
         return BRIDGE.getBoundingBox(handle);
     }
 
@@ -249,10 +210,6 @@ public class NMS {
         return BRIDGE.getCollisionBox(block).add(block.getX(), block.getY(), block.getZ());
     }
 
-    public static BoundingBox getCollisionBox(BlockData blockdata) {
-        return BRIDGE.getCollisionBox(blockdata);
-    }
-
     public static Map<String, Object> getComponentMap(ItemStack item) {
         return BRIDGE.getComponentMap(item);
     }
@@ -262,8 +219,10 @@ public class NMS {
     }
 
     public static int getFallDistance(NPC npc, int def) {
-        return npc == null || npc.getNavigator().getLocalParameters().fallDistance() == -1 ? def
-                : npc.getNavigator().getLocalParameters().fallDistance();
+        return npc == null ? def
+                : npc.data().get(NPC.Metadata.PATHFINDER_FALL_DISTANCE,
+                        Setting.PATHFINDER_FALL_DISTANCE.asInt() != -1 ? Setting.PATHFINDER_FALL_DISTANCE.asInt()
+                                : def);
     }
 
     public static Field getField(Class<?> clazz, String field) {
@@ -280,7 +239,7 @@ public class NMS {
             return f;
         } catch (Exception e) {
             if (log) {
-                Messaging.severeTr(Messages.ERROR_GETTING_FIELD, field, e.getLocalizedMessage());
+                Messaging.logTr(Messages.ERROR_GETTING_FIELD, field, e.getLocalizedMessage());
                 if (Messaging.isDebugging()) {
                     e.printStackTrace();
                 }
@@ -290,7 +249,7 @@ public class NMS {
     }
 
     private static List<Field> getFieldsMatchingType(Class<?> clazz, Class<?> type, boolean allowStatic) {
-        List<Field> found = new ArrayList<>();
+        List<Field> found = Lists.newArrayList();
         for (Field field : clazz.getDeclaredFields()) {
             if (allowStatic ^ Modifier.isStatic(field.getModifiers())) {
                 continue;
@@ -329,16 +288,13 @@ public class NMS {
         if (field == null)
             return null;
         if (MODIFIERS_FIELD == null) {
-            if (UNSAFE_STATIC_FIELD_OFFSET == null) {
-                Object UNSAFE;
+            if (UNSAFE == null) {
                 try {
                     UNSAFE = NMS.getField(Class.forName("sun.misc.Unsafe"), "theUnsafe").get(null);
                 } catch (Exception e) {
+                    e.printStackTrace();
                     if (log) {
-                        Messaging.severeTr(Messages.ERROR_GETTING_FIELD, field.getName(), e.getLocalizedMessage());
-                        if (Messaging.isDebugging()) {
-                            e.printStackTrace();
-                        }
+                        Messaging.logTr(Messages.ERROR_GETTING_FIELD, field.getName(), e.getLocalizedMessage());
                     }
                     return null;
                 }
@@ -371,11 +327,9 @@ public class NMS {
                 return isStatic ? MethodHandles.insertArguments(mh, 0, field.getDeclaringClass(), offset)
                         : MethodHandles.insertArguments(mh, 1, offset);
             } catch (Throwable t) {
+                t.printStackTrace();
                 if (log) {
-                    Messaging.severeTr(Messages.ERROR_GETTING_FIELD, field.getName(), t.getLocalizedMessage());
-                    if (Messaging.isDebugging()) {
-                        t.printStackTrace();
-                    }
+                    Messaging.logTr(Messages.ERROR_GETTING_FIELD, field.getName(), t.getLocalizedMessage());
                 }
                 return null;
             }
@@ -384,7 +338,7 @@ public class NMS {
             MODIFIERS_FIELD.setInt(field, field.getModifiers() & ~Modifier.FINAL);
         } catch (Exception e) {
             if (log) {
-                Messaging.severeTr(Messages.ERROR_GETTING_FIELD, field.getName(), e.getLocalizedMessage());
+                Messaging.logTr(Messages.ERROR_GETTING_FIELD, field.getName(), e.getLocalizedMessage());
                 if (Messaging.isDebugging()) {
                     e.printStackTrace();
                 }
@@ -395,7 +349,7 @@ public class NMS {
             return LOOKUP.unreflectSetter(field);
         } catch (Exception e) {
             if (log) {
-                Messaging.severeTr(Messages.ERROR_GETTING_FIELD, field.getName(), e.getLocalizedMessage());
+                Messaging.logTr(Messages.ERROR_GETTING_FIELD, field.getName(), e.getLocalizedMessage());
                 if (Messaging.isDebugging()) {
                     e.printStackTrace();
                 }
@@ -411,10 +365,7 @@ public class NMS {
                 return null;
             return getFinalSetter(found.get(0), true);
         } catch (Exception e) {
-            Messaging.severeTr(Messages.ERROR_GETTING_FIELD, type, e.getLocalizedMessage());
-            if (Messaging.isDebugging()) {
-                e.printStackTrace();
-            }
+            Messaging.logTr(Messages.ERROR_GETTING_FIELD, type, e.getLocalizedMessage());
         }
         return null;
     }
@@ -426,10 +377,7 @@ public class NMS {
                 return null;
             return LOOKUP.unreflectGetter(found.get(0));
         } catch (Exception e) {
-            Messaging.severeTr(Messages.ERROR_GETTING_FIELD, type, e.getLocalizedMessage());
-            if (Messaging.isDebugging()) {
-                e.printStackTrace();
-            }
+            Messaging.logTr(Messages.ERROR_GETTING_FIELD, type, e.getLocalizedMessage());
         }
         return null;
     }
@@ -468,7 +416,7 @@ public class NMS {
             return LOOKUP.unreflect(first);
         } catch (Exception e) {
             if (log) {
-                Messaging.severeTr(Messages.ERROR_GETTING_METHOD, e.getLocalizedMessage());
+                Messaging.logTr(Messages.ERROR_GETTING_METHOD, e.getLocalizedMessage());
                 if (Messaging.isDebugging()) {
                     e.printStackTrace();
                 }
@@ -484,7 +432,7 @@ public class NMS {
                 return null;
             return LOOKUP.unreflectSetter(found.get(0));
         } catch (Exception e) {
-            Messaging.severeTr(Messages.ERROR_GETTING_FIELD, type, e.getLocalizedMessage());
+            Messaging.logTr(Messages.ERROR_GETTING_FIELD, type, e.getLocalizedMessage());
         }
         return null;
     }
@@ -496,22 +444,9 @@ public class NMS {
                 return null;
             return LOOKUP.unreflectGetter(found.get(0));
         } catch (Exception e) {
-            Messaging.severeTr(Messages.ERROR_GETTING_FIELD, type, e.getLocalizedMessage());
+            Messaging.logTr(Messages.ERROR_GETTING_FIELD, type, e.getLocalizedMessage());
         }
         return null;
-    }
-
-    public static <T> T getFirstStaticObject(Class<?> clazz, Class<?> type) {
-        try {
-            return (T) getFirstStaticGetter(clazz, type).invoke();
-        } catch (Throwable e) {
-            e.printStackTrace();
-        }
-        return null;
-    }
-
-    public static float getForwardBackwardMovement(Entity bukkitEntity) {
-        return BRIDGE.getForwardBackwardMovement(bukkitEntity);
     }
 
     public static MethodHandle getGetter(Class<?> clazz, String name) {
@@ -523,7 +458,7 @@ public class NMS {
             return LOOKUP.unreflectGetter(getField(clazz, name, log));
         } catch (Exception e) {
             if (log) {
-                Messaging.severeTr(Messages.ERROR_GETTING_FIELD, name, e.getLocalizedMessage());
+                Messaging.logTr(Messages.ERROR_GETTING_FIELD, name, e.getLocalizedMessage());
                 if (Messaging.isDebugging()) {
                     e.printStackTrace();
                 }
@@ -532,8 +467,12 @@ public class NMS {
         return null;
     }
 
-    public static float getHeadYaw(Entity entity) {
+    public static float getHeadYaw(org.bukkit.entity.Entity entity) {
         return BRIDGE.getHeadYaw(entity);
+    }
+
+    public static float getHorizontalMovement(org.bukkit.entity.Entity bukkitEntity) {
+        return BRIDGE.getHorizontalMovement(bukkitEntity);
     }
 
     public static float getJumpPower(NPC npc, float original) {
@@ -545,20 +484,32 @@ public class NMS {
         return original;
     }
 
-    public static List<EntityMetadataValue> getMetadata(Entity entity) {
-        return BRIDGE.getMetadata(entity);
+    public static Method getMethod(Class<?> clazz, String method, boolean log, Class<?>... params) {
+        if (clazz == null)
+            return null;
+        Method f = null;
+        try {
+            f = clazz.getDeclaredMethod(method, params);
+            f.setAccessible(true);
+        } catch (Exception e) {
+            if (log) {
+                Messaging.logTr(Messages.ERROR_GETTING_METHOD, method, e.getLocalizedMessage());
+                if (Messaging.isDebugging()) {
+                    e.printStackTrace();
+                }
+            }
+        }
+        return f;
     }
 
     public static MethodHandle getMethodHandle(Class<?> clazz, String method, boolean log, Class<?>... params) {
         if (clazz == null)
             return null;
         try {
-            Method m = clazz.getDeclaredMethod(method, params);
-            m.setAccessible(true);
-            return LOOKUP.unreflect(m);
+            return LOOKUP.unreflect(getMethod(clazz, method, log, params));
         } catch (Exception e) {
             if (log) {
-                Messaging.severeTr(Messages.ERROR_GETTING_METHOD, method, e.getLocalizedMessage());
+                Messaging.logTr(Messages.ERROR_GETTING_METHOD, method, e.getLocalizedMessage());
                 if (Messaging.isDebugging()) {
                     e.printStackTrace();
                 }
@@ -567,28 +518,27 @@ public class NMS {
         return null;
     }
 
-    public static float getMovementSpeed(Entity entity) {
-        return BRIDGE.getMovementSpeed(entity);
+    private static Collection<Player> getNearbyPlayers(Entity from) {
+        return getNearbyPlayers(from, from.getLocation(), 64);
+    }
+
+    private static Collection<Player> getNearbyPlayers(Entity from, Location location, double radius) {
+        return Lists.newArrayList(CitizensAPI.getLocationLookup().getNearbyVisiblePlayers(from, location, radius));
+    }
+
+    public static NPC getNPC(Entity entity) {
+        return BRIDGE.getNPC(entity);
     }
 
     public static EntityPacketTracker getPacketTracker(Entity entity) {
-        if (entity == null)
+        if (entity == null || !entity.isValid())
             return null;
-        if (entity instanceof NPCHolder) {
-            PacketNPC trait = ((NPCHolder) entity).getNPC().getTraitNullable(PacketNPC.class);
-            if (trait != null)
-                return trait.getPacketTracker();
-        }
-        if (!entity.isValid())
+        if (entity instanceof NPCHolder && ((NPCHolder) entity).getNPC().hasTrait(PacketNPC.class))
             return null;
         return BRIDGE.getPacketTracker(entity);
     }
 
-    public static EntityPacketTracker getPacketTrackerDirectly(Entity entity) {
-        return entity == null ? null : BRIDGE.getPacketTracker(entity);
-    }
-
-    public static List<Entity> getPassengers(Entity entity) {
+    public static List<org.bukkit.entity.Entity> getPassengers(org.bukkit.entity.Entity entity) {
         return BRIDGE.getPassengers(entity);
     }
 
@@ -613,7 +563,7 @@ public class NMS {
             return LOOKUP.unreflectSetter(getField(clazz, name, log));
         } catch (Exception e) {
             if (log) {
-                Messaging.severeTr(Messages.ERROR_GETTING_FIELD, name, e.getLocalizedMessage());
+                Messaging.logTr(Messages.ERROR_GETTING_FIELD, name, e.getLocalizedMessage());
                 if (Messaging.isDebugging()) {
                     e.printStackTrace();
                 }
@@ -644,21 +594,12 @@ public class NMS {
         return BRIDGE.getSource(sender);
     }
 
-    public static <T> T getStaticObject(Class<?> clazz, String name) {
-        try {
-            return (T) getGetter(clazz, name).invoke();
-        } catch (Throwable e) {
-            e.printStackTrace();
-        }
-        return null;
+    public static float getSpeedFor(NPC npc) {
+        return BRIDGE.getSpeedFor(npc);
     }
 
-    public static float getStepHeight(Entity entity) {
+    public static float getStepHeight(org.bukkit.entity.Entity entity) {
         return BRIDGE.getStepHeight(entity);
-    }
-
-    public static TargetNavigator getTargetNavigator(Entity entity, Entity target, NavigatorParameters parameters) {
-        return BRIDGE.getTargetNavigator(entity, target, parameters);
     }
 
     public static MCNavigator getTargetNavigator(Entity entity, Iterable<Vector> dest, NavigatorParameters params) {
@@ -669,20 +610,25 @@ public class NMS {
         return BRIDGE.getTargetNavigator(entity, dest, params);
     }
 
-    public static Entity getVehicle(Entity entity) {
+    public static TargetNavigator getTargetNavigator(org.bukkit.entity.Entity entity, org.bukkit.entity.Entity target,
+            NavigatorParameters parameters) {
+        return BRIDGE.getTargetNavigator(entity, target, parameters);
+    }
+
+    public static org.bukkit.entity.Entity getVehicle(org.bukkit.entity.Entity entity) {
         return BRIDGE.getVehicle(entity);
     }
 
-    public static Collection<Player> getViewingPlayers(Entity entity) {
+    public static float getVerticalMovement(org.bukkit.entity.Entity bukkitEntity) {
+        return BRIDGE.getVerticalMovement(bukkitEntity);
+    }
+
+    public static Collection<Player> getViewingPlayers(org.bukkit.entity.Entity entity) {
         return BRIDGE.getViewingPlayers(entity);
     }
 
     public static double getWidth(Entity entity) {
         return BRIDGE.getWidth(entity);
-    }
-
-    public static float getXZMovement(Entity bukkitEntity) {
-        return BRIDGE.getXZMovement(bukkitEntity);
     }
 
     public static float getYaw(Entity entity) {
@@ -691,9 +637,11 @@ public class NMS {
 
     public static void giveReflectiveAccess(Class<?> from, Class<?> to) {
         try {
-            Class<?> module = Class.forName("java.lang.Module");
-            Method GET_MODULE = Class.class.getMethod("getModule");
-            Method ADD_OPENS = module.getMethod("addOpens", String.class, module);
+            if (GET_MODULE == null) {
+                Class<?> module = Class.forName("java.lang.Module");
+                GET_MODULE = Class.class.getMethod("getModule");
+                ADD_OPENS = module.getMethod("addOpens", String.class, module);
+            }
             ADD_OPENS.invoke(GET_MODULE.invoke(from), from.getPackage().getName(), GET_MODULE.invoke(to));
         } catch (Exception e) {
         }
@@ -711,7 +659,7 @@ public class NMS {
         return false;
     }
 
-    public static boolean isOnGround(Entity entity) {
+    public static boolean isOnGround(org.bukkit.entity.Entity entity) {
         return BRIDGE.isOnGround(entity);
     }
 
@@ -727,97 +675,52 @@ public class NMS {
         return BRIDGE.isValid(entity);
     }
 
+    public static void linkTextInteraction(Player player, Entity interaction, Entity mount, double height) {
+        BRIDGE.linkTextInteraction(player, interaction, mount, height);
+    }
+
     public static void load(CommandManager commands) {
         BRIDGE.load(commands);
     }
 
-    public static void loadBridge() throws Exception {
-        int[] version = SpigotUtil.getVersion();
-        String rev = null;
-        switch (version[0]) {
-            case 8:
-                rev = "v1_8_R3";
-                break;
-            case 10:
-                rev = "v1_10_R1";
-                break;
-            case 11:
-                rev = "v1_11_R1";
-                break;
-            case 12:
-                rev = "v1_12_R1";
-                break;
-            case 13:
-                rev = "v1_13_R2";
-                break;
-            case 14:
-                rev = "v1_14_R1";
-                break;
-            case 15:
-                rev = "v1_15_R1";
-                break;
-            case 16:
-                rev = "v1_16_R3";
-                break;
-            case 17:
-                rev = "v1_17_R1";
-                break;
-            case 18:
-                rev = "v1_18_R2";
-                break;
-            case 19:
-                rev = "v1_19_R3";
-                break;
-            case 20:
-                rev = "v1_20_R4";
-                break;
-            case 21:
-                if (version[1] < 9) {
-                    rev = "v1_21_R5";
-                } else if (version[2] < 11) {
-                    rev = "v1_21_R6";
-                } else {
-                    rev = "v1_21_R7";
-                }
-                break;
-            case 26:
-            case 27:
-                rev = "v26_" + version[1] + "_R1";
-                break;
-        }
+    public static void loadBridge(String rev) throws Exception {
         Class<?> entity = null;
         try {
-            entity = Class.forName("net.minecraft.world.entity.Entity");
-        } catch (ClassNotFoundException ex) {
             entity = Class.forName("net.minecraft.server." + rev + ".Entity");
+        } catch (ClassNotFoundException ex) {
+            entity = Class.forName("net.minecraft.world.entity.Entity");
         }
         giveReflectiveAccess(entity, NMS.class);
         BRIDGE = (NMSBridge) Class.forName("net.citizensnpcs.nms." + rev + ".util.NMSImpl").getConstructor()
                 .newInstance();
     }
 
-    public static void look(Entity bhandle, Entity btarget) {
-        BRIDGE.look(bhandle, btarget);
-    }
-
     public static void look(Entity entity, float yaw, float pitch) {
         BRIDGE.look(entity, yaw, pitch);
     }
 
-    public static void look(Entity entity, Location to, boolean headOnly, boolean immediate) {
+    public static void look(org.bukkit.entity.Entity entity, Location to, boolean headOnly, boolean immediate) {
         BRIDGE.look(entity, to, headOnly, immediate);
     }
 
-    public static void markPoseDirty(Entity tracker) {
-        BRIDGE.markPoseDirty(tracker);
+    public static void look(org.bukkit.entity.Entity bhandle, org.bukkit.entity.Entity btarget) {
+        BRIDGE.look(bhandle, btarget);
     }
 
-    public static void mount(Entity entity, Entity passenger) {
+    public static void mount(org.bukkit.entity.Entity entity, org.bukkit.entity.Entity passenger) {
         BRIDGE.mount(entity, passenger);
+    }
+
+    public static void onPlayerInfoAdd(Player player, Object source, Function<UUID, MirrorTrait> mirrorTraits) {
+        BRIDGE.onPlayerInfoAdd(player, source, mirrorTraits);
     }
 
     public static InventoryView openAnvilInventory(Player player, Inventory inventory, String title) {
         return BRIDGE.openAnvilInventory(player, inventory, title);
+    }
+
+    public static void openHorseScreen(Tameable horse, Player equipper) {
+        BRIDGE.openHorseInventory(horse, equipper);
     }
 
     public static void playAnimation(PlayerAnimation animation, Player player, Iterable<Player> to) {
@@ -828,69 +731,59 @@ public class NMS {
         return BRIDGE.playerTicker(entity instanceof NPCHolder ? ((NPCHolder) entity).getNPC() : null, entity);
     }
 
-    public static void positionInteractionText(Player player, Entity interaction, Entity mount, double height) {
-        BRIDGE.positionInteractionText(player, interaction, mount, height);
-    }
-
-    public static void registerEntityClass(Class<?> clazz, Object type) {
-        // TODO: is this used outside of Citizens? could remove this abstraction
-        BRIDGE.registerEntityClass(clazz, type);
+    public static void registerEntityClass(Class<?> clazz) {
+        BRIDGE.registerEntityClass(clazz);
     }
 
     public static void remove(Entity entity) {
-        CitizensAPI.getScheduler().checkedRunRegionTask(entity.getLocation(), () -> BRIDGE.remove(entity));
+        BRIDGE.remove(entity);
     }
 
     public static void removeFromServerPlayerList(Player player) {
-        CitizensAPI.getScheduler().checkedRunEntityTask(player, () -> BRIDGE.removeFromServerPlayerList(player));
+        BRIDGE.removeFromServerPlayerList(player);
     }
 
-    public static void removeFromWorld(Entity entity) {
-        CitizensAPI.getScheduler().checkedRunEntityTask(entity, () -> BRIDGE.removeFromWorld(entity));
+    public static void removeFromWorld(org.bukkit.entity.Entity entity) {
+        BRIDGE.removeFromWorld(entity);
     }
 
     public static void removeHookIfNecessary(FishHook entity) {
-        CitizensAPI.getScheduler().checkedRunEntityTask(entity, () -> BRIDGE.removeHookIfNecessary(entity));
+        BRIDGE.removeHookIfNecessary(entity);
     }
 
     public static void replaceTracker(Entity entity) {
         BRIDGE.replaceTrackerEntry(entity);
     }
 
-    public static void sendCameraPacket(Player player, Entity entity) {
-        BRIDGE.sendCameraPacket(player, entity);
+    public static void sendPositionUpdate(Entity from, Collection<Player> to, boolean position) {
+        sendPositionUpdate(from, to, position, NMS.getYaw(from), from.getLocation().getPitch(), NMS.getHeadYaw(from));
     }
 
-    public static void sendComponent(Player player, Object component) {
-        BRIDGE.sendComponent(player, component);
+    public static void sendPositionUpdate(Entity from, Collection<Player> to, boolean position, Float bodyYaw,
+            Float pitch, Float headYaw) {
+        BRIDGE.sendPositionUpdate(from, to, position, bodyYaw, pitch, headYaw);
     }
 
-    public static void sendRotationPacket(Entity from, Iterable<Player> to) {
-        sendRotationPacket(from, to, null, null, null);
+    public static void sendPositionUpdateNearby(Entity from, boolean position) {
+        sendPositionUpdate(from, getNearbyPlayers(from), position, NMS.getYaw(from), from.getLocation().getPitch(),
+                NMS.getHeadYaw(from));
     }
 
-    public static void sendRotationPacket(Entity from, Iterable<Player> to, Float bodyYaw, Float pitch, Float headYaw) {
-        BRIDGE.sendPositionUpdate(from, to, false, bodyYaw, pitch, headYaw);
+    public static void sendPositionUpdateNearby(Entity from, boolean position, Float bodyYaw, Float pitch,
+            Float headYaw) {
+        sendPositionUpdate(from, getNearbyPlayers(from), position, bodyYaw, pitch, headYaw);
     }
 
-    public static void sendRotationPacketNearby(Entity from, Float bodyYaw, Float pitch, Float headYaw) {
-        sendRotationPacketNearby(from, bodyYaw, pitch, headYaw, p -> true);
+    public static boolean sendTabListAdd(Player recipient, Player listPlayer) {
+        return BRIDGE.sendTabListAdd(recipient, listPlayer);
     }
 
-    public static void sendRotationPacketNearby(Entity from, Float bodyYaw, Float pitch, Float headYaw,
-            Function<Player, Boolean> function) {
-        sendRotationPacket(from,
-                Iterables.filter(CitizensAPI.getLocationLookup().getNearbyPlayers(from.getLocation(), 64),
-                        p -> (function == null || function.apply(p)) && !p.equals(from)),
-                bodyYaw, pitch, headYaw);
+    public static void sendTabListRemove(Player recipient, Collection<Player> players) {
+        BRIDGE.sendTabListRemove(recipient, players);
     }
 
-    public static boolean sendTabListAdd(Player to, Player listPlayer) {
-        return BRIDGE.sendTabListAdd(to, listPlayer);
-    }
-
-    public static void sendTabListRemove(Player to, Player listPlayer) {
-        BRIDGE.sendTabListRemove(to, ImmutableList.of(listPlayer));
+    public static void sendTabListRemove(Player recipient, Player listPlayer) {
+        sendTabListRemove(recipient, ImmutableList.of(listPlayer));
     }
 
     public static void sendTeamPacket(Player recipient, Team team, int mode) {
@@ -925,7 +818,7 @@ public class NMS {
         BRIDGE.setCustomName(entity, component, string);
     }
 
-    public static void setDestination(Entity entity, double x, double y, double z, float speed) {
+    public static void setDestination(org.bukkit.entity.Entity entity, double x, double y, double z, float speed) {
         BRIDGE.setDestination(entity, x, y, z, speed);
     }
 
@@ -937,11 +830,11 @@ public class NMS {
         BRIDGE.setEndermanAngry(enderman, angry);
     }
 
-    public static void setHeadAndBodyYaw(Entity entity, float yaw) {
+    public static void setHeadAndBodyYaw(org.bukkit.entity.Entity entity, float yaw) {
         BRIDGE.setHeadAndBodyYaw(entity, yaw);
     }
 
-    public static void setHeadYaw(Entity entity, float yaw) {
+    public static void setHeadYaw(org.bukkit.entity.Entity entity, float yaw) {
         BRIDGE.setHeadYaw(entity, yaw);
     }
 
@@ -957,11 +850,8 @@ public class NMS {
         BRIDGE.setLyingDown(cat, lying);
     }
 
-    public static void setMannequinDescription(Entity mannequin, Object component) {
-        BRIDGE.setMannequinDescription(mannequin, component);
-    }
-
-    public static void setNavigationTarget(Entity handle, Entity target, float speed) {
+    public static void setNavigationTarget(org.bukkit.entity.Entity handle, org.bukkit.entity.Entity target,
+            float speed) {
         BRIDGE.setNavigationTarget(handle, target, speed);
     }
 
@@ -973,19 +863,11 @@ public class NMS {
         BRIDGE.setNoGravity(entity, nogravity);
     }
 
-    public static void setNoPhysics(Entity entity, boolean nophysics) {
-        BRIDGE.setNoPhysics(entity, nophysics);
-    }
-
-    public static void setOpWithoutSaving(Player player, boolean op) {
-        BRIDGE.setOpWithoutSaving(player, op);
-    }
-
     public static void setPandaSitting(Entity entity, boolean sitting) {
         BRIDGE.setPandaSitting(entity, sitting);
     }
 
-    public static void setPeekShulker(Entity entity, int peek) {
+    public static void setPeekShulker(org.bukkit.entity.Entity entity, int peek) {
         if (!entity.getType().name().equals("SHULKER"))
             throw new IllegalArgumentException("entity must be a shulker");
 
@@ -1012,7 +894,7 @@ public class NMS {
         BRIDGE.setProfile(meta, profile);
     }
 
-    public static void setShouldJump(Entity entity) {
+    public static void setShouldJump(org.bukkit.entity.Entity entity) {
         BRIDGE.setShouldJump(entity);
     }
 
@@ -1032,8 +914,8 @@ public class NMS {
         BRIDGE.setSnifferState(entity, state);
     }
 
-    public static void setStepHeight(Entity entity, float height) {
-        CitizensAPI.getScheduler().checkedRunEntityTask(entity, () -> BRIDGE.setStepHeight(entity, height));
+    public static void setStepHeight(org.bukkit.entity.Entity entity, float height) {
+        BRIDGE.setStepHeight(entity, height);
     }
 
     public static void setTeamNameTagVisible(Team team, boolean visible) {
@@ -1056,11 +938,7 @@ public class NMS {
         BRIDGE.setWitherInvulnerableTicks(wither, ticks);
     }
 
-    public static boolean shouldBroadcastToPlayer(NPC npc, Supplier<Boolean> defaultResponse) {
-        return npc != null && npc.data().has(NPC.Metadata.NPC_SPAWNING_IN_PROGRESS) ? false : defaultResponse.get();
-    }
-
-    public static boolean shouldJump(Entity entity) {
+    public static boolean shouldJump(org.bukkit.entity.Entity entity) {
         return BRIDGE.shouldJump(entity);
     }
 
@@ -1068,7 +946,6 @@ public class NMS {
         if (BRIDGE != null) {
             BRIDGE.shutdown();
             BRIDGE = null;
-            FIND_PROFILES_BY_NAMES = null;
         }
     }
 
@@ -1076,11 +953,11 @@ public class NMS {
         BRIDGE.sleep(entity, sleep);
     }
 
-    public static void trySwim(Entity entity) {
-        trySwim(entity, MinecraftBlockExaminer.isWaterMob(entity) ? 0.02F : 0.04F);
+    public static void trySwim(org.bukkit.entity.Entity entity) {
+        trySwim(entity, SwimmingExaminer.isWaterMob(entity) ? 0.02F : 0.04F);
     }
 
-    public static void trySwim(Entity entity, float power) {
+    public static void trySwim(org.bukkit.entity.Entity entity, float power) {
         BRIDGE.trySwim(entity, power);
     }
 
@@ -1088,7 +965,7 @@ public class NMS {
         BRIDGE.updateInventoryTitle(player, view, newTitle);
     }
 
-    public static void updateNavigationWorld(Entity entity, org.bukkit.World world) {
+    public static void updateNavigationWorld(org.bukkit.entity.Entity entity, org.bukkit.World world) {
         BRIDGE.updateNavigationWorld(entity, world);
     }
 
@@ -1096,15 +973,15 @@ public class NMS {
         BRIDGE.updatePathfindingRange(npc, pathfindingRange);
     }
 
+    private static Method ADD_OPENS;
     private static NMSBridge BRIDGE;
-    private static MethodHandle CUSTOM_NBT_TAG;
-    private static boolean CUSTOM_NBT_TAG_MISSING;
-    private static MethodHandle FIND_PROFILES_BY_NAMES;
-    private static final MethodHandles.Lookup LOOKUP = MethodHandles.lookup();
+    private static MethodHandle FIND_PROFILES_BY_NAMES = null;
+    private static Method GET_MODULE;
+    private static MethodHandles.Lookup LOOKUP = MethodHandles.lookup();
     private static Field MODIFIERS_FIELD;
     private static boolean PAPER_KNOCKBACK_EVENT_EXISTS = true;
-    private static boolean SUPPORTS_ATTRIBUTABLE = true;
-    private static boolean SUPPORTS_FIND_PROFILES_BY_NAME = true;
+    private static boolean SUPPORT_KNOCKBACK_RESISTANCE = true;
+    private static Object UNSAFE;
     private static MethodHandle UNSAFE_FIELD_OFFSET;
     private static MethodHandle UNSAFE_PUT_BOOLEAN;
     private static MethodHandle UNSAFE_PUT_DOUBLE;
@@ -1120,23 +997,7 @@ public class NMS {
         } catch (ClassNotFoundException e) {
             PAPER_KNOCKBACK_EVENT_EXISTS = false;
         }
-        try {
-            Class.forName("org.bukkit.attribute.Attributable");
-        } catch (ClassNotFoundException e) {
-            SUPPORTS_ATTRIBUTABLE = false;
-        }
-        try {
-            GameProfileRepository.class.getMethod("findProfilesByNames", String[].class, ProfileLookupCallback.class);
-        } catch (Exception e) {
-            SUPPORTS_FIND_PROFILES_BY_NAME = false;
-        }
         giveReflectiveAccess(Field.class, NMS.class);
         MODIFIERS_FIELD = NMS.getField(Field.class, "modifiers", false);
-
-        try {
-            NMS.getFinalSetter(MinecraftClient.class, "LOGGER").invoke(NOPLogger.NOP_LOGGER);
-        } catch (Throwable e) {
-            e.printStackTrace();
-        }
     }
 }

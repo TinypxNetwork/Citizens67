@@ -12,3 +12,6 @@ dependency-reduced-pom.xml
 *.jardesc
 *.lnk
 *.bbmodel
+
+# Built plugin at repository root
+Citizens-*-MC1.8.8-Packet.jar

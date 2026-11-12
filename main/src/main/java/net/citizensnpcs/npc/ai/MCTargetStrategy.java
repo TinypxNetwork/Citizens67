@@ -11,7 +11,6 @@ import net.citizensnpcs.api.ai.AttackStrategy;
 import net.citizensnpcs.api.ai.EntityTarget;
 import net.citizensnpcs.api.ai.NavigatorParameters;
 import net.citizensnpcs.api.ai.PathStrategy;
-import net.citizensnpcs.api.ai.PathfinderType;
 import net.citizensnpcs.api.ai.TargetType;
 import net.citizensnpcs.api.ai.event.CancelReason;
 import net.citizensnpcs.api.astar.pathfinder.MinecraftBlockExaminer;
@@ -20,8 +19,8 @@ import net.citizensnpcs.api.util.BoundingBox;
 import net.citizensnpcs.util.NMS;
 
 public class MCTargetStrategy implements PathStrategy, EntityTarget {
-    private final boolean aggressive;
-    private int attackDelay;
+    private final boolean aggro;
+    private int attackTicks;
     private CancelReason cancelReason;
     private final Entity handle;
     private final NPC npc;
@@ -30,27 +29,29 @@ public class MCTargetStrategy implements PathStrategy, EntityTarget {
     private TargetNavigator targetNavigator;
     private int updateCounter = -1;
 
-    public MCTargetStrategy(NPC npc, org.bukkit.entity.Entity target, boolean aggressive, NavigatorParameters params) {
+    public MCTargetStrategy(NPC npc, org.bukkit.entity.Entity target, boolean aggro, NavigatorParameters params) {
         this.npc = npc;
         parameters = params;
         handle = npc.getEntity();
         this.target = target;
         TargetNavigator nms = NMS.getTargetNavigator(npc.getEntity(), target, params);
-        targetNavigator = nms != null && params.pathfinderType() == PathfinderType.MINECRAFT ? nms
-                : new AStarTargeter();
-        this.aggressive = aggressive;
+        targetNavigator = nms != null && !params.useNewPathfinder() ? nms : new AStarTargeter();
+        this.aggro = aggro;
     }
 
     private boolean canAttack() {
         BoundingBox handleBB = NMS.getBoundingBox(handle), targetBB = NMS.getBoundingBox(target);
-        return attackDelay <= 0 && handleBB.maxY > targetBB.minY && handleBB.minY < targetBB.maxY
-                && handle.getLocation().distance(target.getLocation()) <= parameters.attackRange()
-                && ((LivingEntity) handle).hasLineOfSight(target);
+        return attackTicks <= 0 && handleBB.maxY > targetBB.minY && handleBB.minY < targetBB.maxY
+                && distance() <= parameters.attackRange() && ((LivingEntity) handle).hasLineOfSight(target);
     }
 
     @Override
     public void clearCancelReason() {
         cancelReason = null;
+    }
+
+    private double distance() {
+        return handle.getLocation().distance(target.getLocation());
     }
 
     @Override
@@ -69,7 +70,7 @@ public class MCTargetStrategy implements PathStrategy, EntityTarget {
     }
 
     @Override
-    public Entity getTarget() {
+    public org.bukkit.entity.Entity getTarget() {
         return target;
     }
 
@@ -85,7 +86,7 @@ public class MCTargetStrategy implements PathStrategy, EntityTarget {
 
     @Override
     public boolean isAggressive() {
-        return aggressive;
+        return aggro;
     }
 
     @Override
@@ -114,7 +115,7 @@ public class MCTargetStrategy implements PathStrategy, EntityTarget {
         if (parameters.straightLineTargetingDistance() > 0 && !(targetNavigator instanceof StraightLineTargeter)) {
             targetNavigator = new StraightLineTargeter(targetNavigator);
         }
-        if (!aggressive && parameters.withinMargin(handle.getLocation(), target.getLocation())) {
+        if (!aggro && distance() <= parameters.distanceMargin()) {
             stop();
             return false;
         } else if (updateCounter == -1 || updateCounter++ > parameters.updatePathRate()) {
@@ -124,15 +125,17 @@ public class MCTargetStrategy implements PathStrategy, EntityTarget {
         targetNavigator.update();
 
         NMS.look(handle, target);
-        if (aggressive && canAttack()) {
+        if (aggro && canAttack()) {
             AttackStrategy strategy = parameters.attackStrategy();
             if (strategy != null && !strategy.handle((LivingEntity) handle, (LivingEntity) getTarget())
                     && strategy != parameters.defaultAttackStrategy()) {
                 parameters.defaultAttackStrategy().handle((LivingEntity) handle, (LivingEntity) getTarget());
             }
-            attackDelay = parameters.attackDelayTicks();
+            attackTicks = parameters.attackDelayTicks();
         }
-        attackDelay--;
+        if (attackTicks > 0) {
+            attackTicks--;
+        }
         return false;
     }
 

@@ -1,12 +1,14 @@
 package net.citizensnpcs.trait.waypoint;
 
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
+import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.command.CommandSender;
+
+import com.google.common.collect.Lists;
 
 import net.citizensnpcs.api.CitizensAPI;
 import net.citizensnpcs.api.npc.NPC;
@@ -39,7 +41,7 @@ public class Waypoint {
 
     public void addTrigger(WaypointTrigger trigger) {
         if (triggers == null) {
-            triggers = new ArrayList<>();
+            triggers = Lists.newArrayList();
         }
         triggers.add(trigger);
     }
@@ -100,24 +102,20 @@ public class Waypoint {
     }
 
     private void runTriggers(NPC npc, int start) {
-        WaypointTrigger[] triggers = this.triggers.toArray(new WaypointTrigger[0]);
-        for (int i = start; i < triggers.length; i++) {
-            WaypointTrigger trigger = triggers[i];
+        List<WaypointTrigger> triggers = Lists.newArrayList(this.triggers);
+        for (int i = start; i < triggers.size(); i++) {
+            WaypointTrigger trigger = triggers.get(i);
             trigger.onWaypointReached(npc, location.clone());
-            if (!(trigger instanceof DelayTrigger))
+            if (!(trigger instanceof DelayTrigger)) {
                 continue;
-
+            }
             int delay = ((DelayTrigger) trigger).getDelay();
-            if (delay <= 0)
+            if (delay <= 0) {
                 continue;
-
-            WaypointProvider provider = npc.getOrAddTrait(Waypoints.class).getCurrentProvider();
-            provider.setPaused(true);
+            }
             int newStart = i + 1;
-            CitizensAPI.getScheduler().runEntityTaskLater(npc.getEntity(), () -> {
-                provider.setPaused(false);
-                runTriggers(npc, newStart);
-            }, delay);
+            Bukkit.getScheduler().scheduleSyncDelayedTask(CitizensAPI.getPlugin(), () -> runTriggers(npc, newStart),
+                    delay);
             break;
         }
     }

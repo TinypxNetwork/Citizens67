@@ -15,6 +15,7 @@ import net.citizensnpcs.api.ai.event.CancelReason;
 import net.citizensnpcs.api.astar.pathfinder.MinecraftBlockExaminer;
 import net.citizensnpcs.api.npc.NPC;
 import net.citizensnpcs.util.NMS;
+import net.citizensnpcs.util.Util;
 
 public class MCNavigationStrategy extends AbstractPathStrategy {
     private final Entity entity;
@@ -36,7 +37,7 @@ public class MCNavigationStrategy extends AbstractPathStrategy {
         if (!MinecraftBlockExaminer.canStandIn(dest.getBlock())) {
             dest = MinecraftBlockExaminer.findValidLocationAbove(dest, 2);
         }
-        target = dest;
+        target = Util.getCenterLocation(dest.getBlock());
         parameters = params;
         entity = npc.getEntity();
         navigator = NMS.getTargetNavigator(entity, target, params);
@@ -81,7 +82,12 @@ public class MCNavigationStrategy extends AbstractPathStrategy {
         if (getCancelReason() != null)
             return true;
         boolean wasFinished = navigator.update();
-        if (parameters.withinMargin(entity.getLocation(), target)) {
+        Location loc = entity.getLocation();
+        double dX = target.getX() - loc.getX();
+        double dZ = target.getZ() - loc.getZ();
+        double dY = target.getY() - loc.getY();
+        double xzDistance = Math.sqrt(dX * dX + dZ * dZ);
+        if (Math.abs(dY) < 1 && xzDistance <= parameters.distanceMargin()) {
             stop();
             return true;
         }

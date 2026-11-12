@@ -1,6 +1,7 @@
 package net.citizensnpcs.npc;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
@@ -17,37 +18,36 @@ import org.bukkit.inventory.ItemStack;
 
 import com.google.common.collect.Maps;
 
-import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
+import gnu.trove.map.hash.TIntObjectHashMap;
 import net.citizensnpcs.Settings.Setting;
+import net.citizensnpcs.trait.PacketNPC;
 import net.citizensnpcs.api.CitizensAPI;
-import net.citizensnpcs.api.CitizensPlugin;
 import net.citizensnpcs.api.event.DespawnReason;
 import net.citizensnpcs.api.event.NPCCreateEvent;
 import net.citizensnpcs.api.event.SpawnReason;
 import net.citizensnpcs.api.npc.NPC;
 import net.citizensnpcs.api.npc.NPCDataStore;
 import net.citizensnpcs.api.npc.NPCRegistry;
-import net.citizensnpcs.api.npc.RemoveReason;
 import net.citizensnpcs.api.trait.Trait;
 import net.citizensnpcs.api.trait.trait.MobType;
+import net.citizensnpcs.api.util.RemoveReason;
 import net.citizensnpcs.npc.ai.NPCHolder;
 import net.citizensnpcs.trait.ArmorStandTrait;
 import net.citizensnpcs.trait.LookClose;
+import net.citizensnpcs.util.NMS;
 
 public class CitizensNPCRegistry implements NPCRegistry {
     private final String name;
-    private final Int2ObjectOpenHashMap<NPC> npcs = new Int2ObjectOpenHashMap<>();
-    private final CitizensPlugin plugin;
+    private final TIntObjectHashMap<NPC> npcs = new TIntObjectHashMap<>();
     private final NPCDataStore saves;
-    private final Map<UUID, NPC> uniqueNPCs = Maps.newConcurrentMap();
+    private final Map<UUID, NPC> uniqueNPCs = Maps.newHashMap();
 
-    public CitizensNPCRegistry(NPCDataStore store, CitizensPlugin plugin) {
-        this(store, plugin, "");
+    public CitizensNPCRegistry(NPCDataStore store) {
+        this(store, "");
     }
 
-    public CitizensNPCRegistry(NPCDataStore store, CitizensPlugin cplugin, String registryName) {
+    public CitizensNPCRegistry(NPCDataStore store, String registryName) {
         saves = store;
-        plugin = cplugin;
         name = registryName;
     }
 
@@ -67,7 +67,8 @@ public class CitizensNPCRegistry implements NPCRegistry {
     public NPC createNPC(EntityType type, UUID uuid, int id, String name) {
         Objects.requireNonNull(name, "name cannot be null");
         Objects.requireNonNull(type, "type cannot be null");
-        CitizensNPC npc = new CitizensNPC(uuid, id, name, EntityControllers.createForType(type), this, plugin); 
+        CitizensNPC npc = new CitizensNPC(uuid, id, name, EntityControllers.createForType(type), this);
+        npc.getOrAddTrait(MobType.class).setType(type);
         npcs.put(id, npc);
         uniqueNPCs.put(npc.getUniqueId(), npc);
         Bukkit.getPluginManager().callEvent(new NPCCreateEvent(npc));
@@ -77,6 +78,9 @@ public class CitizensNPCRegistry implements NPCRegistry {
         if (Setting.DEFAULT_LOOK_CLOSE.asBoolean()) {
             npc.addTrait(LookClose.class);
         }
+        if (Setting.PACKET_DEFAULT_ENABLED.asBoolean()) {
+            npc.addTrait(PacketNPC.class);
+        }
         return npc;
     }
 
@@ -84,13 +88,13 @@ public class CitizensNPCRegistry implements NPCRegistry {
     public NPC createNPCUsingItem(EntityType type, String name, ItemStack item) {
         NPC npc = createNPC(type, name);
         if (type.name().equals("OMINOUS_ITEM_SPAWNER") || type.name().equals("DROPPED_ITEM")
-                || type.name().contains("MINECART") || type.name().equals("ITEM") || type == EntityType.FALLING_BLOCK
-                || type == EntityType.ITEM_FRAME || type.name().equals("GLOW_ITEM_FRAME")
-                || type.name().equals("ITEM_DISPLAY") || type.name().equals("BLOCK_DISPLAY")) {
+                || type.name().equals("ITEM") || type == EntityType.FALLING_BLOCK || type == EntityType.ITEM_FRAME
+                || type.name().equals("GLOW_ITEM_FRAME") || type.name().equals("ITEM_DISPLAY")
+                || type.name().equals("BLOCK_DISPLAY")) {
             npc.data().set(NPC.Metadata.ITEM_AMOUNT, item.getAmount());
             npc.data().set(NPC.Metadata.ITEM_ID, item.getType().name());
             npc.data().set(NPC.Metadata.ITEM_DATA, item.getData().getData());
-            npc.setItemProvider(() -> item.clone());
+            npc.setItemProvider(() -> item);
         } else
             throw new UnsupportedOperationException("Not an item entity type");
         return npc;
@@ -131,7 +135,7 @@ public class CitizensNPCRegistry implements NPCRegistry {
             try {
                 npc.despawn(reason);
             } catch (Throwable e) {
-                e.printStackTrace();
+                e.printStackTrace(); // ensure that all entities are despawned
             }
             itr.remove();
         }
@@ -188,7 +192,9 @@ public class CitizensNPCRegistry implements NPCRegistry {
 
     @Override
     public NPC getNPC(Entity entity) {
-        return entity instanceof NPCHolder ? ((NPCHolder) entity).getNPC() : null;
+        if (entity == null)
+            return null;
+        return entity instanceof NPCHolder ? ((NPCHolder) entity).getNPC() : NMS.getNPC(entity);
     }
 
     @Override
@@ -199,7 +205,7 @@ public class CitizensNPCRegistry implements NPCRegistry {
     @Override
     public Iterator<NPC> iterator() {
         return new Iterator<NPC>() {
-            Iterator<NPC> itr = npcs.values().iterator();
+            Iterator<NPC> itr = npcs.valueCollection().iterator();
             UUID lastUUID;
 
             @Override
@@ -235,8 +241,8 @@ public class CitizensNPCRegistry implements NPCRegistry {
 
     @Override
     public Iterable<NPC> sorted() {
-        List<NPC> vals = new ArrayList<>(npcs.values());
-        vals.sort(Comparator.comparing(NPC::getId));
+        List<NPC> vals = new ArrayList<>(npcs.valueCollection());
+        Collections.sort(vals, Comparator.comparing(NPC::getId));
         return vals;
     }
 }

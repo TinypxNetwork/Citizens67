@@ -159,8 +159,9 @@ public class MojangSkinGenerator {
                 String hex = Long.toHexString(xuid);
                 GameProfile profile = new GameProfile(
                         UUID.fromString("00000000-0000-0000-" + hex.substring(0, 4) + "-" + hex.substring(4)), name);
-                return new SkinProperty((String) output.get("texture_id"), (String) output.get("value"),
-                        (String) output.get("signature")).applyProperties(profile);
+                new SkinProperty((String) output.get("texture_id"), (String) output.get("value"),
+                        (String) output.get("signature")).apply(profile);
+                return profile;
             } finally {
                 if (reader != null) {
                     try {

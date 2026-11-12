@@ -1,35 +1,29 @@
 package net.citizensnpcs.util;
 
 import java.util.ArrayList;
-import java.util.Iterator;
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Queue;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentLinkedQueue;
 
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
+import org.bukkit.scheduler.BukkitRunnable;
 
-import com.google.common.collect.Sets;
-
-import net.citizensnpcs.api.CitizensAPI;
-import net.citizensnpcs.api.npc.AbstractNPC;
 import net.citizensnpcs.api.npc.NPC;
 import net.citizensnpcs.api.util.Messaging;
-import net.citizensnpcs.api.util.SpigotUtil;
-import net.citizensnpcs.api.util.schedulers.SchedulerRunnable;
 import net.citizensnpcs.npc.ai.NPCHolder;
 import net.citizensnpcs.trait.PacketNPC;
 
-public class PlayerUpdateTask extends SchedulerRunnable {
-    private final List<PlayerTick> players = new ArrayList<>();
-    private final Set<UUID> uuids = Sets.newHashSet();
+public class PlayerUpdateTask extends BukkitRunnable {
+    private final Map<UUID, PlayerTick> players = new LinkedHashMap<>();
 
     @Override
     public void cancel() {
         super.cancel();
-        uuids.clear();
         players.clear();
         PLAYERS_PENDING_ADD.clear();
         PLAYERS_PENDING_REMOVE.clear();
@@ -37,48 +31,42 @@ public class PlayerUpdateTask extends SchedulerRunnable {
 
     @Override
     public void run() {
-        if (PLAYERS_PENDING_REMOVE.size() > 0) {
-            players.removeIf(pt -> PLAYERS_PENDING_REMOVE.contains(pt.entity.getUniqueId()));
-            for (UUID uuid : PLAYERS_PENDING_REMOVE) {
-                uuids.remove(uuid);
+        for (Entity entity : PLAYERS_PENDING_REMOVE) {
+            PlayerTick current = players.get(entity.getUniqueId());
+            // A despawned entity and its replacement share a UUID, but only the old instance is removed.
+            if (current != null && current.entity == entity) {
+                players.remove(entity.getUniqueId());
             }
-            PLAYERS_PENDING_REMOVE.clear();
         }
+        PLAYERS_PENDING_REMOVE.clear();
         for (Entity entity : PLAYERS_PENDING_ADD) {
             NPC next = ((NPCHolder) entity).getNPC();
-            if (uuids.contains(entity.getUniqueId())) {
-                // XXX: how often does this case get hit? can simplify implementation
-                PlayerTick rm = null;
-                for (Iterator<PlayerTick> itr = players.iterator(); itr.hasNext();) {
-                    PlayerTick pt = itr.next();
-                    if (pt.entity.getUniqueId().equals(entity.getUniqueId())) {
-                        rm = pt;
-                        itr.remove();
-                        uuids.remove(pt.entity.getUniqueId());
-                        break;
-                    }
-                }
-                NPC old = ((NPCHolder) rm.entity).getNPC();
+            PlayerTick previous = players.get(entity.getUniqueId());
+            // Packet spawning and post-spawn initialization can register the same object on different ticks.
+            if (previous != null && previous.entity == entity)
+                continue;
+            if (previous != null) {
+                NPC old = ((NPCHolder) previous.entity).getNPC();
                 if (old != next) {
-                    Messaging.severe("Player registered twice with different NPC instances", rm.entity.getUniqueId());
+                    Messaging.severe("Player registered twice with different NPC instances", entity.getUniqueId());
                 }
-                if (rm.entity instanceof Player) {
-                    NMS.removeFromWorld(rm.entity);
-                    NMS.remove(rm.entity);
+                if (previous.entity instanceof Player) {
+                    NMS.removeFromWorld(previous.entity);
+                    NMS.remove(previous.entity);
                 } else {
-                    rm.entity.remove();
+                    previous.entity.remove();
                 }
             }
             if (next.hasTrait(PacketNPC.class)) {
-                players.add(new PlayerTick(entity, () -> ((AbstractNPC) next).update()));
+                // Packet NPCs are driven by PacketNpcService, not by the real-entity tick task.
+                players.remove(entity.getUniqueId());
             } else {
-                players.add(new PlayerTick(entity, NMS.playerTicker((Player) entity)));
+                players.put(entity.getUniqueId(), new PlayerTick(entity, NMS.playerTicker((Player) entity)));
             }
-            uuids.add(entity.getUniqueId());
         }
         PLAYERS_PENDING_ADD.clear();
 
-        for (PlayerTick player : players) {
+        for (PlayerTick player : players.values()) {
             player.run();
         }
     }
@@ -94,24 +82,25 @@ public class PlayerUpdateTask extends SchedulerRunnable {
 
         @Override
         public void run() {
-            if (SpigotUtil.isFoliaServer()) {
-                CitizensAPI.getScheduler().runEntityTask(entity, tick);
-            } else {
-                tick.run();
-            }
+            tick.run();
         }
     }
 
-    public static void deregister(Entity entity) {
-        PLAYERS_PENDING_ADD.remove(entity);
-        PLAYERS_PENDING_REMOVE.add(entity.getUniqueId());
+    public static void deregisterPlayer(org.bukkit.entity.Entity entity) {
+        if (entity == null)
+            return;
+        PLAYERS_PENDING_ADD.removeIf(pending -> pending == entity);
+        PLAYERS_PENDING_REMOVE.add(entity);
     }
 
-    public static void register(Entity entity) {
-        PLAYERS_PENDING_REMOVE.remove(entity.getUniqueId());
+    public static void registerPlayer(org.bukkit.entity.Entity entity) {
+        if (entity == null)
+            return;
+        PLAYERS_PENDING_REMOVE.remove(entity);
+        PLAYERS_PENDING_ADD.removeIf(pending -> pending == entity);
         PLAYERS_PENDING_ADD.add(entity);
     }
 
-    private static final Queue<Entity> PLAYERS_PENDING_ADD = new ConcurrentLinkedQueue<>();
-    private static final Queue<UUID> PLAYERS_PENDING_REMOVE = new ConcurrentLinkedQueue<>();
+    private static final List<Entity> PLAYERS_PENDING_ADD = new ArrayList<>();
+    private static final Set<Entity> PLAYERS_PENDING_REMOVE = Collections.newSetFromMap(new IdentityHashMap<>());
 }

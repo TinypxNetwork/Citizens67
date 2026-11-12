@@ -1,12 +1,11 @@
 package net.citizensnpcs.trait.versioned;
 
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.function.Supplier;
 
 import org.bukkit.Bukkit;
-import org.bukkit.Registry;
+import org.bukkit.attribute.Attribute;
 import org.bukkit.boss.BarColor;
 import org.bukkit.boss.BarFlag;
 import org.bukkit.boss.BarStyle;
@@ -34,7 +33,6 @@ import net.citizensnpcs.api.trait.Trait;
 import net.citizensnpcs.api.trait.TraitName;
 import net.citizensnpcs.api.util.Messaging;
 import net.citizensnpcs.api.util.Placeholders;
-import net.citizensnpcs.api.util.SpigotUtil;
 import net.citizensnpcs.util.NMS;
 import net.citizensnpcs.util.Util;
 
@@ -44,7 +42,7 @@ public class BossBarTrait extends Trait {
     @Persist
     private BarColor color = BarColor.PURPLE;
     @Persist
-    private List<BarFlag> flags = new ArrayList<>();
+    private List<BarFlag> flags = Lists.newArrayList();
     private Supplier<Double> progressProvider;
     @Persist
     private int range = -1;
@@ -69,7 +67,7 @@ public class BossBarTrait extends Trait {
 
         if (activeBar == null) {
             activeBar = Bukkit.getServer().createBossBar(npc.getFullName(), color, style,
-                    flags.toArray(new BarFlag[0]));
+                    flags.toArray(new BarFlag[flags.size()]));
         }
         return activeBar;
     }
@@ -144,9 +142,11 @@ public class BossBarTrait extends Trait {
                     LivingEntity entity = (LivingEntity) npc.getEntity();
                     double maxHealth = entity.getMaxHealth();
                     if (SUPPORT_ATTRIBUTES) {
-                        maxHealth = entity.getAttribute(
-                                SpigotUtil.getRegistryValue(Registry.ATTRIBUTE, "generic.max_health", "max_health"))
-                                .getValue();
+                        try {
+                            maxHealth = entity.getAttribute(Attribute.GENERIC_MAX_HEALTH).getValue();
+                        } catch (Throwable t) {
+                            SUPPORT_ATTRIBUTES = false;
+                        }
                     }
                     bar.setProgress(entity.getHealth() / maxHealth);
                 }
@@ -236,8 +236,7 @@ public class BossBarTrait extends Trait {
             desc = "",
             modifiers = { "bossbar" },
             min = 1,
-            max = 1,
-            permission = "citizens.npc.bossbar")
+            max = 1)
     @Requirements(selected = true, ownership = true)
     public static void bossbar(CommandContext args, CommandSender sender, NPC npc, @Flag("style") BarStyle style,
             @Flag("track") String track, @Flag("color") BarColor color, @Flag("visible") Boolean visible,
@@ -259,14 +258,14 @@ public class BossBarTrait extends Trait {
         if (visible != null) {
             trait.setVisible(visible);
         }
-        if (range != null && sender.hasPermission("citizens.npc.bossbar.range")) {
+        if (range != null) {
             trait.setRange(range);
         }
         if (viewpermission != null) {
             trait.setViewPermission(viewpermission);
         }
         if (flags != null) {
-            List<BarFlag> parsed = new ArrayList<>();
+            List<BarFlag> parsed = Lists.newArrayList();
             for (String s : Splitter.on(',').omitEmptyStrings().trimResults().split(flags)) {
                 BarFlag flag = Util.matchEnum(BarFlag.values(), s);
                 if (flag != null) {
@@ -278,11 +277,4 @@ public class BossBarTrait extends Trait {
     }
 
     private static boolean SUPPORT_ATTRIBUTES = true;
-    static {
-        try {
-            Class.forName("org.bukkit.attribute.Attribute");
-        } catch (ClassNotFoundException e) {
-            SUPPORT_ATTRIBUTES = false;
-        }
-    }
 }

@@ -1,21 +1,31 @@
-Citizens2 README
-================
+# Citizens67
 
-Minecraft 1.8.8 发包优化版的源码、构建和安装说明见 [mc1.8.8/README.md](mc1.8.8/README.md)。成品为工作区根目录的 `Citizens-2.0.35-MC1.8.8-Packet.jar`。
+面向 Minecraft 1.8.8 的 [Citizens](https://github.com/CitizensDev/Citizens2) 发包 NPC 分支。
 
-Citizens is an NPC plugin for the Bukkit API. It was first released on March 5, 2011, and has since seen numerous updates. Citizens provides an API which developers can use to create their own NPC characters. More information on the API can be found on the API page of the Citizens Wiki (https://wiki.citizensnpcs.co/API).
+- 发包 NPC 基于 [PacketEvents](https://github.com/retrooper/packetevents) 2.13.x；服务器需要安装 `packetevents` 插件。
+- 仓库只保留一套 1.8.8 源码：`main/`、`v1_8_R3/`、`packet-adapter/`、`dist/`。
+- ProtocolLib 已移除；发包、皮肤、交互、动作链和轻量全息图都由 PacketEvents 路径实现。
 
-Compatible with:
-* Minecraft (for specific compatible version information, see https://wiki.citizensnpcs.co/Versions for info)
-* CitizensAPI (for compiling purposes only)
+## 构建
 
-Extra information
-=================
+```bash
+./build.sh package
+```
 
-Javadoc: http://jd.citizensnpcs.co
+Windows：
 
-Spigot page: https://www.spigotmc.org/resources/citizens.13811
+```powershell
+.\build.ps1
+```
 
-Developmental builds: https://ci.citizensnpcs.co/job/Citizens2/
+产物：`dist/target/Citizens-2.0.35-bMC1.8.8-packet.jar`。
 
-For questions/help join our discord at: https://discord.gg/Q6pZGSR
+## 文档
+
+- 架构、命令、配置、测试与已知限制：[docs/architecture.md](docs/architecture.md)
+- 集成测试：[integration/protocol_test.py](integration/protocol_test.py)
+- Citizens API：https://wiki.citizensnpcs.co/API
+
+## 许可
+
+Citizens 原始代码遵循 Open Software License 3.0；本分支为自用修改。

@@ -6,13 +6,10 @@ import java.util.List;
 import java.util.function.Function;
 
 import org.bukkit.Bukkit;
-import org.bukkit.Chunk;
 import org.bukkit.Location;
-import org.bukkit.World;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.event.player.PlayerTeleportEvent.TeleportCause;
-import org.bukkit.plugin.Plugin;
 import org.bukkit.util.Vector;
 
 import com.google.common.collect.Iterables;
@@ -23,7 +20,6 @@ import net.citizensnpcs.api.ai.EntityTarget;
 import net.citizensnpcs.api.ai.Navigator;
 import net.citizensnpcs.api.ai.NavigatorParameters;
 import net.citizensnpcs.api.ai.PathStrategy;
-import net.citizensnpcs.api.ai.PathfinderType;
 import net.citizensnpcs.api.ai.StuckAction;
 import net.citizensnpcs.api.ai.TargetType;
 import net.citizensnpcs.api.ai.TeleportStuckAction;
@@ -35,9 +31,7 @@ import net.citizensnpcs.api.ai.event.NavigationReplaceEvent;
 import net.citizensnpcs.api.ai.event.NavigationStuckEvent;
 import net.citizensnpcs.api.ai.event.NavigatorCallback;
 import net.citizensnpcs.api.astar.pathfinder.DoorExaminer;
-import net.citizensnpcs.api.astar.pathfinder.FallingExaminer;
 import net.citizensnpcs.api.astar.pathfinder.FlyingBlockExaminer;
-import net.citizensnpcs.api.astar.pathfinder.JumpingExaminer;
 import net.citizensnpcs.api.astar.pathfinder.MinecraftBlockExaminer;
 import net.citizensnpcs.api.astar.pathfinder.SwimmingExaminer;
 import net.citizensnpcs.api.npc.NPC;
@@ -45,28 +39,27 @@ import net.citizensnpcs.api.util.DataKey;
 import net.citizensnpcs.api.util.Messaging;
 import net.citizensnpcs.api.util.SpigotUtil;
 import net.citizensnpcs.npc.ai.AStarNavigationStrategy.AStarPlanner;
-import net.citizensnpcs.trait.ChunkTicketTrait;
+import net.citizensnpcs.npc.ai.MCNavigationStrategy.MCNavigator;
 import net.citizensnpcs.trait.RotationTrait;
 import net.citizensnpcs.trait.RotationTrait.PacketRotationSession;
 import net.citizensnpcs.util.ChunkCoord;
 import net.citizensnpcs.util.NMS;
 
 public class CitizensNavigator implements Navigator, Runnable {
-    private ChunkCoord activeTicket;
+    private Location activeTicket;
     private final NavigatorParameters defaultParams = new NavigatorParameters().baseSpeed(UNINITIALISED_SPEED)
             .range(Setting.DEFAULT_PATHFINDING_RANGE.asFloat()).debug(Setting.DEBUG_PATHFINDING.asBoolean())
             .defaultAttackStrategy((attacker, target) -> {
                 NMS.attack(attacker, target);
-                return true;
+                return false;
             }).attackRange(Setting.NPC_ATTACK_DISTANCE.asDouble())
             .updatePathRate(Setting.DEFAULT_PATHFINDER_UPDATE_PATH_RATE.asTicks())
             .distanceMargin(Setting.DEFAULT_DISTANCE_MARGIN.asDouble())
             .pathDistanceMargin(Setting.DEFAULT_PATH_DISTANCE_MARGIN.asDouble())
             .stationaryTicks(Setting.DEFAULT_STATIONARY_DURATION.asTicks()).stuckAction(TeleportStuckAction.INSTANCE)
-            .pathfinderType(PathfinderType.valueOf(Setting.PATHFINDER_TYPE.asString()))
+            .examiner(new MinecraftBlockExaminer()).useNewPathfinder(Setting.USE_NEW_PATHFINDER.asBoolean())
             .straightLineTargetingDistance(Setting.DEFAULT_STRAIGHT_LINE_TARGETING_DISTANCE.asFloat())
-            .destinationTeleportMargin(Setting.DEFAULT_DESTINATION_TELEPORT_MARGIN.asDouble())
-            .fallDistance(Setting.PATHFINDER_FALL_DISTANCE.asInt());
+            .destinationTeleportMargin(Setting.DEFAULT_DESTINATION_TELEPORT_MARGIN.asDouble());
     private PathStrategy executing;
     private int lastX, lastY, lastZ;
     private NavigatorParameters localParams = defaultParams;
@@ -81,12 +74,7 @@ public class CitizensNavigator implements Navigator, Runnable {
                 !Setting.DEFAULT_STUCK_ACTION.asString().contains("teleport"))) {
             defaultParams.stuckAction(null);
         }
-        defaultParams.examiner(new MinecraftBlockExaminer(npc));
-        defaultParams.examiner(new SwimmingExaminer());
-        if (Setting.CITIZENS_PATHFINDER_JUMPS.asBoolean()) {
-            defaultParams.examiner(new JumpingExaminer(() -> (int) Math.ceil(npc.getEntity().getHeight()),
-                    () -> getLocalParameters().speed()));
-        }
+        defaultParams.examiner(new SwimmingExaminer(npc));
     }
 
     @Override
@@ -106,15 +94,16 @@ public class CitizensNavigator implements Navigator, Runnable {
 
     @Override
     public boolean canNavigateTo(Location dest, NavigatorParameters params) {
-        if (defaultParams.pathfinderType().isCitizens() || !(npc.getEntity() instanceof LivingEntity)) {
+        if (defaultParams.useNewPathfinder() || !(npc.getEntity() instanceof LivingEntity)) {
             if (npc.isFlyable()) {
                 params.examiner(new FlyingBlockExaminer());
             }
             AStarPlanner planner = new AStarPlanner(params, npc.getStoredLocation(), dest);
-            planner.tick();
+            planner.tick(Setting.MAXIMUM_ASTAR_ITERATIONS.asInt(), Setting.MAXIMUM_ASTAR_ITERATIONS.asInt());
             return planner.plan != null;
         } else {
-            return NMS.canNavigateTo(npc.getEntity(), dest, params);
+            MCNavigator nav = NMS.getTargetNavigator(npc.getEntity(), dest, params);
+            return nav.getCancelReason() == null;
         }
     }
 
@@ -130,7 +119,9 @@ public class CitizensNavigator implements Navigator, Runnable {
 
     @Override
     public NavigatorParameters getLocalParameters() {
-        return isNavigating() ? localParams : defaultParams;
+        if (!isNavigating())
+            return defaultParams;
+        return localParams;
     }
 
     @Override
@@ -167,8 +158,8 @@ public class CitizensNavigator implements Navigator, Runnable {
         if (root.keyExists("pathfindingrange")) {
             defaultParams.range((float) root.getDouble("pathfindingrange"));
         }
-        if (root.keyExists("pathfindertype")) {
-            defaultParams.pathfinderType(PathfinderType.valueOf(root.getString("pathfindertype")));
+        if (root.keyExists("usenewpathfinder")) {
+            defaultParams.useNewPathfinder(root.getBoolean("usenewpathfinder"));
         }
         if (root.keyExists("stationaryticks")) {
             defaultParams.stationaryTicks(root.getInt("stationaryticks"));
@@ -182,9 +173,6 @@ public class CitizensNavigator implements Navigator, Runnable {
         if (root.keyExists("updatepathrate")) {
             defaultParams.updatePathRate(root.getInt("updatepathrate"));
         }
-        if (root.keyExists("falldistance")) {
-            defaultParams.fallDistance(root.getInt("falldistance"));
-        }
         defaultParams.speedModifier((float) root.getDouble("speedmodifier", 1F));
         defaultParams.avoidWater(root.getBoolean("avoidwater"));
         if (!root.getBoolean("usedefaultstuckaction") && defaultParams.stuckAction() == TeleportStuckAction.INSTANCE) {
@@ -197,7 +185,9 @@ public class CitizensNavigator implements Navigator, Runnable {
     }
 
     public void onSpawn() {
-        defaultParams.baseSpeed(NMS.getMovementSpeed(npc.getEntity()));
+        if (defaultParams.baseSpeed() == UNINITIALISED_SPEED) {
+            defaultParams.baseSpeed(NMS.getSpeedFor(npc));
+        }
         updatePathfindingRange();
     }
 
@@ -210,7 +200,7 @@ public class CitizensNavigator implements Navigator, Runnable {
         Location npcLoc = npc.getStoredLocation();
         Location targetLoc = getTargetAsLocation();
 
-        if (!npcLoc.getWorld().equals(targetLoc.getWorld()) || npcLoc.distance(targetLoc) > localParams.range()) {
+        if (!npcLoc.getWorld().equals(targetLoc.getWorld()) || localParams.range() < npcLoc.distance(targetLoc)) {
             stopNavigating(CancelReason.STUCK);
             return;
         }
@@ -218,52 +208,27 @@ public class CitizensNavigator implements Navigator, Runnable {
             return;
 
         updatePathfindingRange();
-
-        if (localParams.destinationTeleportMargin() > 0
-                && localParams.withinMargin(npcLoc, targetLoc, localParams.destinationTeleportMargin())) {
-            Location from = npcLoc.clone();
-            Location to = targetLoc.clone();
-            to.setYaw(from.getYaw());
-            to.setPitch(from.getPitch());
-            npc.teleport(to, TeleportCause.PLUGIN);
-            /*
-            long totalTicks = (long) Math.ceil(npcLoc.distance(targetLoc) / localParams.speed());
-            teleporting = new SchedulerRunnable() {
-                long currentTick = 0;
-
-                @Override
-                public void run() {
-                    if (!npc.getEntity().isValid()) {
-                        cancel();
-                        return;
-                    }
-                    double t = (double) ++currentTick / totalTicks;
-
-                    double newX = from.getX() + (to.getX() - to.getX()) * t;
-                    double newY = from.getY() + (to.getY() - to.getY()) * t;
-                    double newZ = from.getZ() + (to.getZ() - to.getZ()) * t;
-
-                    if (t >= 1.0) {
-                        cancel();
-                    }
-                }
-            }.runEntityTask(CitizensAPI.getPlugin(), npc.getEntity(), null);*/
-        } else {
-            boolean finished = executing.update();
-            if (!finished) {
-                localParams.run();
-            }
-            if (localParams.lookAtFunction() != null) {
-                if (session == null) {
-                    RotationTrait trait = npc.getOrAddTrait(RotationTrait.class);
-                    session = trait
-                            .createPacketSession(trait.getGlobalParameters().clone().filter(p -> true).persist(true));
-                }
-                session.getSession().rotateToFace(localParams.lookAtFunction().apply(this));
-            }
-            if (!finished)
-                return;
+        boolean finished = executing.update();
+        if (!finished) {
+            localParams.run();
         }
+        if (localParams.lookAtFunction() != null) {
+            if (session == null) {
+                RotationTrait trait = npc.getOrAddTrait(RotationTrait.class);
+                session = trait
+                        .createPacketSession(trait.getGlobalParameters().clone().filter(p -> true).persist(true));
+            }
+            session.getSession().rotateToFace(localParams.lookAtFunction().apply(this));
+        }
+        if (localParams.destinationTeleportMargin() > 0
+                && npcLoc.distance(targetLoc) <= localParams.destinationTeleportMargin()) {
+            // TODO: easing?
+            npc.teleport(targetLoc, TeleportCause.PLUGIN);
+            finished = true;
+        }
+        if (!finished)
+            return;
+
         if (executing.getCancelReason() != null) {
             stopNavigating(executing.getCancelReason());
         } else {
@@ -302,15 +267,10 @@ public class CitizensNavigator implements Navigator, Runnable {
         } else {
             root.removeKey("updatepathrate");
         }
-        if (defaultParams.fallDistance() != Setting.PATHFINDER_FALL_DISTANCE.asTicks()) {
-            root.setInt("falldistance", defaultParams.fallDistance());
+        if (defaultParams.useNewPathfinder() != Setting.USE_NEW_PATHFINDER.asBoolean()) {
+            root.setBoolean("usenewpathfinder", defaultParams.useNewPathfinder());
         } else {
-            root.removeKey("falldistance");
-        }
-        if (defaultParams.pathfinderType() != PathfinderType.valueOf(Setting.PATHFINDER_TYPE.asString())) {
-            root.setString("pathfindertype", defaultParams.pathfinderType().name());
-        } else {
-            root.removeKey("pathfindertype");
+            root.removeKey("usenewpathfinder");
         }
         root.setDouble("speedmodifier", defaultParams.speedModifier());
         root.setBoolean("avoidwater", defaultParams.avoidWater());
@@ -373,25 +333,22 @@ public class CitizensNavigator implements Navigator, Runnable {
             stopNavigating(CancelReason.REPLACE);
         }
         localParams = defaultParams.clone();
-
-        if (localParams.pathfinderType().isCitizens()) {
-            if (localParams.fallDistance() != -1) {
-                localParams.examiner(new FallingExaminer(localParams.fallDistance()));
-            }
-            if (npc.data().get(NPC.Metadata.PATHFINDER_OPEN_DOORS,
-                    Setting.CITIZENS_PATHFINDER_OPENS_DOORS.asBoolean())) {
-                localParams.examiner(new DoorExaminer());
-            }
-            if (Setting.CITIZENS_PATHFINDER_CHECK_BOUNDING_BOXES.asBoolean()) {
-                localParams.examiner(new BoundingBoxExaminer(npc.getEntity()));
-            }
+        int fallDistance = npc.data().get(NPC.Metadata.PATHFINDER_FALL_DISTANCE,
+                Setting.PATHFINDER_FALL_DISTANCE.asInt());
+        if (fallDistance != -1) {
+            localParams.examiner(new FallingExaminer(fallDistance));
+        }
+        if (npc.data().get(NPC.Metadata.PATHFINDER_OPEN_DOORS, Setting.NEW_PATHFINDER_OPENS_DOORS.asBoolean())) {
+            localParams.examiner(new DoorExaminer());
+        }
+        if (Setting.NEW_PATHFINDER_CHECK_BOUNDING_BOXES.asBoolean()) {
+            localParams.examiner(new BoundingBoxExaminer(npc.getEntity()));
         }
         updatePathfindingRange();
         executing = strategy.apply(localParams);
         stationaryTicks = 0;
         if (npc.isSpawned()) {
             NMS.updateNavigationWorld(npc.getEntity(), npc.getEntity().getWorld());
-            npc.getOrAddTrait(ChunkTicketTrait.class);
             updateTicket(executing.getTargetAsLocation());
         }
         Bukkit.getPluginManager().callEvent(new NavigationBeginEvent(this));
@@ -408,7 +365,7 @@ public class CitizensNavigator implements Navigator, Runnable {
         setTarget(params -> {
             if (npc.isFlyable()) {
                 return new FlyingAStarNavigationStrategy(npc, path, params);
-            } else if (params.pathfinderType().isCitizens() || !(npc.getEntity() instanceof LivingEntity)) {
+            } else if (params.useNewPathfinder() || !(npc.getEntity() instanceof LivingEntity)) {
                 return new AStarNavigationStrategy(npc, path, params);
             } else {
                 return new MCNavigationStrategy(npc, path, params);
@@ -426,11 +383,9 @@ public class CitizensNavigator implements Navigator, Runnable {
         }
         Location target = targetIn.clone();
         setTarget(params -> {
-            if (params.locationStrategyFactory() != null) {
-                return params.locationStrategyFactory().create(npc, params, target);
-            } else if (npc.isFlyable()) {
+            if (npc.isFlyable()) {
                 return new FlyingAStarNavigationStrategy(npc, target, params);
-            } else if (params.pathfinderType().isCitizens() || !(npc.getEntity() instanceof LivingEntity)) {
+            } else if (params.useNewPathfinder() || !(npc.getEntity() instanceof LivingEntity)) {
                 return new AStarNavigationStrategy(npc, target, params);
             } else {
                 return new MCNavigationStrategy(npc, target, params);
@@ -455,7 +410,8 @@ public class CitizensNavigator implements Navigator, Runnable {
         if (!SUPPORT_CHUNK_TICKETS || !CitizensAPI.hasImplementation() || !CitizensAPI.getPlugin().isEnabled())
             return;
 
-        updateTicket(null);
+        Bukkit.getScheduler().scheduleSyncDelayedTask(CitizensAPI.getPlugin(),
+                () -> updateTicket(isNavigating() ? executing.getTargetAsLocation() : null), 10);
 
         // Location loc = npc.getEntity().getLocation(STATIONARY_LOCATION);
         // NMS.look(npc.getEntity(), loc.getYaw(), 0);
@@ -562,37 +518,32 @@ public class CitizensNavigator implements Navigator, Runnable {
         if (!SUPPORT_CHUNK_TICKETS || !CitizensAPI.hasImplementation() || !CitizensAPI.getPlugin().isEnabled())
             return;
 
-        ChunkCoord coord = null;
-        if (target != null && (coord = new ChunkCoord(target)).equals(activeTicket))
+        if (target != null && activeTicket != null
+                && new ChunkCoord(target.getChunk()).equals(new ChunkCoord(activeTicket.getChunk()))) {
+            activeTicket = target.clone();
             return;
-
-        // switch ticket to the new chunk
+        }
         if (activeTicket != null) {
-            final ChunkCoord tempTicket = activeTicket;
-            final World tempWorld = tempTicket.getWorld();
-            CitizensAPI.getScheduler().runRegionTask(tempWorld, tempTicket.x, tempTicket.z, () -> {
-                tempTicket.getChunk().removePluginChunkTicket(CitizensAPI.getPlugin());
-            });
+            try {
+                activeTicket.getChunk().removePluginChunkTicket(CitizensAPI.getPlugin());
+            } catch (NoSuchMethodError e) {
+                SUPPORT_CHUNK_TICKETS = false;
+                activeTicket = null;
+            }
         }
         if (target == null) {
             activeTicket = null;
             return;
         }
-        activeTicket = coord;
-        final ChunkCoord tempTicket = activeTicket;
-        final World tempTicketWorld = tempTicket.getWorld();
-        CitizensAPI.getScheduler().runRegionTask(tempTicketWorld, tempTicket.x, tempTicket.z, () -> {
-            tempTicket.getChunk().addPluginChunkTicket(CitizensAPI.getPlugin());
-        });
+        activeTicket = target.clone();
+        try {
+            activeTicket.getChunk().addPluginChunkTicket(CitizensAPI.getPlugin());
+        } catch (NoSuchMethodError e) {
+            SUPPORT_CHUNK_TICKETS = false;
+            activeTicket = null;
+        }
     }
 
     private static boolean SUPPORT_CHUNK_TICKETS = true;
-    private static final float UNINITIALISED_SPEED = 0.3f;
-    static {
-        try {
-            Chunk.class.getMethod("removePluginChunkTicket", Plugin.class);
-        } catch (NoSuchMethodException | SecurityException e) {
-            SUPPORT_CHUNK_TICKETS = false;
-        }
-    }
+    private static int UNINITIALISED_SPEED = Integer.MIN_VALUE;
 }

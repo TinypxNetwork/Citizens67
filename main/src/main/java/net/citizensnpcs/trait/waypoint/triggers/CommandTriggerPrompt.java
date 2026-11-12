@@ -1,6 +1,5 @@
 package net.citizensnpcs.trait.waypoint.triggers;
 
-import java.util.ArrayList;
 import java.util.List;
 
 import org.bukkit.command.CommandSender;
@@ -14,7 +13,7 @@ import net.citizensnpcs.api.util.Messaging;
 import net.citizensnpcs.util.Messages;
 
 public class CommandTriggerPrompt extends StringPrompt implements WaypointTriggerPrompt {
-    private final List<String> commands = new ArrayList<>();
+    private final List<String> commands = Lists.newArrayList();
 
     @Override
     public Prompt acceptInput(ConversationContext context, String input) {

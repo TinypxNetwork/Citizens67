@@ -4,14 +4,12 @@ import java.util.function.Consumer;
 
 import org.bukkit.Material;
 import org.bukkit.entity.Entity;
-import org.bukkit.entity.HumanEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 
 import net.citizensnpcs.api.gui.InputMenus;
 import net.citizensnpcs.api.gui.InventoryMenuPage;
 import net.citizensnpcs.api.persistence.Persist;
-import net.citizensnpcs.trait.ShopTrait.NPCShopStorage;
 import net.citizensnpcs.util.InventoryMultiplexer;
 import net.citizensnpcs.util.Util;
 
@@ -40,7 +38,7 @@ public class ExperienceAction extends NPCShopAction {
     }
 
     @Override
-    public Transaction grant(NPCShopStorage storage, Entity entity, InventoryMultiplexer inventory, int repeats) {
+    public Transaction grant(Entity entity, InventoryMultiplexer inventory, int repeats) {
         if (!(entity instanceof Player))
             return Transaction.fail();
 
@@ -54,7 +52,7 @@ public class ExperienceAction extends NPCShopAction {
     }
 
     @Override
-    public Transaction take(NPCShopStorage storage, Entity entity, InventoryMultiplexer inventory, int repeats) {
+    public Transaction take(Entity entity, InventoryMultiplexer inventory, int repeats) {
         if (!(entity instanceof Player))
             return Transaction.fail();
 
@@ -68,11 +66,6 @@ public class ExperienceAction extends NPCShopAction {
     }
 
     public static class ExperienceActionGUI implements GUI {
-        @Override
-        public boolean canUse(HumanEntity entity) {
-            return entity.hasPermission("citizens.npc.shop.editor.actions.edit-exp");
-        }
-
         @Override
         public InventoryMenuPage createEditor(NPCShopAction previous, Consumer<NPCShopAction> callback) {
             ExperienceAction action = previous == null ? new ExperienceAction() : (ExperienceAction) previous;

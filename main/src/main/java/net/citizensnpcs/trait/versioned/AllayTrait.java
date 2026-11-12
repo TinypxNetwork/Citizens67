@@ -32,9 +32,9 @@ public class AllayTrait extends Trait {
 
     @Override
     public void run() {
-        if (!npc.isSpawned() || !(npc.getCosmeticEntity() instanceof Allay))
+        if (!npc.isSpawned() || !(npc.getEntity() instanceof Allay))
             return;
-        NMS.setAllayDancing(npc.getCosmeticEntity(), dancing);
+        NMS.setAllayDancing(npc.getEntity(), dancing);
     }
 
     public void setDancing(boolean dance) {
@@ -50,7 +50,7 @@ public class AllayTrait extends Trait {
             max = 1,
             flags = "d",
             permission = "citizens.npc.allay")
-    @Requirements(selected = true, ownership = true, cosmeticTypes = EntityType.ALLAY)
+    @Requirements(selected = true, ownership = true, types = EntityType.ALLAY)
     public static void allay(CommandContext args, CommandSender sender, NPC npc) throws CommandException {
         AllayTrait trait = npc.getOrAddTrait(AllayTrait.class);
         String output = "";

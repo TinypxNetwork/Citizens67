@@ -1,7 +1,11 @@
 package net.citizensnpcs.npc.skin.profile;
 
 import java.util.Objects;
-import java.util.function.Consumer;
+
+import javax.annotation.Nullable;
+
+import org.bukkit.Bukkit;
+import org.bukkit.scheduler.BukkitTask;
 
 import net.citizensnpcs.api.CitizensAPI;
 
@@ -22,7 +26,7 @@ public class ProfileFetcher {
      * @param handler
      *            Optional handler to handle the result. Handler always invoked from the main thread.
      */
-    public static void fetch(String name, Consumer<ProfileRequest> handler) {
+    public static void fetch(String name, @Nullable ProfileFetchHandler handler) {
         Objects.requireNonNull(name);
 
         if (PROFILE_THREAD == null) {
@@ -31,7 +35,7 @@ public class ProfileFetcher {
         PROFILE_THREAD.fetch(name, handler);
     }
 
-    public static void fetchForced(String name, Consumer<ProfileRequest> handler) {
+    public static void fetchForced(String name, ProfileFetchHandler handler) {
         Objects.requireNonNull(name);
 
         if (PROFILE_THREAD == null) {
@@ -45,7 +49,7 @@ public class ProfileFetcher {
             THREAD_TASK.cancel();
         }
         PROFILE_THREAD = new ProfileFetchThread();
-        THREAD_TASK = CitizensAPI.getScheduler().runTaskTimerAsynchronously(PROFILE_THREAD, 21, 20);
+        THREAD_TASK = Bukkit.getScheduler().runTaskTimerAsynchronously(CitizensAPI.getPlugin(), PROFILE_THREAD, 21, 20);
     }
 
     /**
@@ -60,8 +64,9 @@ public class ProfileFetcher {
             THREAD_TASK.cancel();
             THREAD_TASK = null;
         }
+        PROFILE_THREAD = null;
     }
 
     private static ProfileFetchThread PROFILE_THREAD;
-    private static net.citizensnpcs.api.util.schedulers.SchedulerTask THREAD_TASK;
+    private static BukkitTask THREAD_TASK;
 }

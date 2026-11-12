@@ -1,7 +1,5 @@
 package net.citizensnpcs.trait;
 
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -9,10 +7,14 @@ import java.util.Random;
 import org.bukkit.Material;
 import org.bukkit.entity.HumanEntity;
 import org.bukkit.entity.Player;
+import org.bukkit.event.EventHandler;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
+
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 
 import net.citizensnpcs.api.event.NPCDeathEvent;
 import net.citizensnpcs.api.gui.InventoryMenu;
@@ -23,14 +25,13 @@ import net.citizensnpcs.api.gui.MenuContext;
 import net.citizensnpcs.api.gui.PercentageSlotHandler;
 import net.citizensnpcs.api.persistence.Persist;
 import net.citizensnpcs.api.trait.Trait;
-import net.citizensnpcs.api.trait.TraitEventHandler;
 import net.citizensnpcs.api.trait.TraitName;
 import net.citizensnpcs.util.Util;
 
 @TraitName("dropstrait")
 public class DropsTrait extends Trait {
     @Persist(reify = true)
-    private List<ItemDrop> drops = new ArrayList<>();
+    private List<ItemDrop> drops = Lists.newArrayList();
 
     public DropsTrait() {
         super("dropstrait");
@@ -40,8 +41,11 @@ public class DropsTrait extends Trait {
         InventoryMenu.createSelfRegistered(new DropsGUI(this)).present(sender);
     }
 
-    @TraitEventHandler
+    @EventHandler
     public void onNPCDeath(NPCDeathEvent event) {
+        if (!event.getNPC().equals(npc))
+            return;
+
         Random random = Util.getFastRandom();
         for (ItemDrop drop : drops) {
             if (random.nextDouble() < drop.chance) {
@@ -52,7 +56,7 @@ public class DropsTrait extends Trait {
 
     @Menu(title = "Add items for drops", type = InventoryType.CHEST, dimensions = { 5, 9 })
     public static class DropsGUI extends InventoryMenuPage {
-        private final Map<Integer, Double> chances = new HashMap<>();
+        private final Map<Integer, Double> chances = Maps.newHashMap();
         private Inventory inventory;
         private DropsTrait trait;
 
@@ -107,7 +111,7 @@ public class DropsTrait extends Trait {
 
         @Override
         public void onClose(HumanEntity player) {
-            List<ItemDrop> drops = new ArrayList<>();
+            List<ItemDrop> drops = Lists.newArrayList();
             for (int i = 0; i < 5; i += 2) {
                 for (int j = 0; j < 9; j++) {
                     int slot = i * 9 + j;

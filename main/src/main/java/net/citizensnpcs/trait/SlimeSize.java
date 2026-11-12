@@ -1,7 +1,6 @@
 package net.citizensnpcs.trait;
 
 import org.bukkit.command.CommandSender;
-import org.bukkit.entity.AbstractCubeMob;
 import org.bukkit.entity.Slime;
 
 import net.citizensnpcs.api.persistence.Persist;
@@ -19,6 +18,7 @@ import net.citizensnpcs.util.Messages;
 public class SlimeSize extends Trait {
     @Persist
     private int size = 3;
+    private boolean slime;
 
     public SlimeSize() {
         super("slimesize");
@@ -34,11 +34,12 @@ public class SlimeSize extends Trait {
 
     @Override
     public void onSpawn() {
-        if (CUBE_MOB_EXISTS && npc.getCosmeticEntity() instanceof AbstractCubeMob) {
-            ((AbstractCubeMob) npc.getCosmeticEntity()).setSize(size);
-        } else if (npc.getCosmeticEntity() instanceof Slime) {
-            ((Slime) npc.getCosmeticEntity()).setSize(size);
+        if (!(npc.getEntity() instanceof Slime)) {
+            slime = false;
+            return;
         }
+        ((Slime) npc.getEntity()).setSize(size);
+        slime = true;
     }
 
     /**
@@ -46,16 +47,8 @@ public class SlimeSize extends Trait {
      */
     public void setSize(int size) {
         this.size = size;
-        onSpawn();
-    }
-
-    private static boolean CUBE_MOB_EXISTS = true;
-
-    static {
-        try {
-            Class.forName("org.bukkit.entity.AbstractCubeMob");
-        } catch (ClassNotFoundException e) {
-            CUBE_MOB_EXISTS = false;
+        if (slime) {
+            ((Slime) npc.getEntity()).setSize(size);
         }
     }
 }

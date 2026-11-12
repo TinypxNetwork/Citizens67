@@ -17,37 +17,32 @@ import net.citizensnpcs.api.util.DataKey;
  */
 @TraitName("clickredirecttrait")
 public class ClickRedirectTrait extends Trait {
-    private NPC redirectTo;
+    private NPC redirectNPC;
 
     public ClickRedirectTrait() {
         super("clickredirecttrait");
     }
 
-    public ClickRedirectTrait(NPC redirectTo) {
+    public ClickRedirectTrait(NPC npc) {
         this();
-        this.redirectTo = redirectTo;
-    }
-
-    public NPC getRedirectToNPC() {
-        return redirectTo;
-    }
-
-    @Override
-    public void linkToNPC(NPC npc) {
-        super.linkToNPC(npc);
-        if (redirectTo != null && redirectTo.hasTrait(PlayerFilter.class)) {
-            redirectTo.getOrAddTrait(PlayerFilter.class).addChildNPC(npc);
+        redirectNPC = npc;
+        if (redirectNPC != null && redirectNPC.hasTrait(PlayerFilter.class)) {
+            redirectNPC.getOrAddTrait(PlayerFilter.class).addChildNPC(npc);
         }
+    }
+
+    public NPC getRedirectNPC() {
+        return redirectNPC;
     }
 
     @Override
     public void load(DataKey key) {
-        redirectTo = CitizensAPI.getNPCRegistry().getByUniqueIdGlobal(UUID.fromString(key.getString("uuid")));
+        redirectNPC = CitizensAPI.getNPCRegistry().getByUniqueIdGlobal(UUID.fromString(key.getString("uuid")));
     }
 
     @EventHandler
     public void onTraitAdd(NPCAddTraitEvent event) {
-        if (event.getNPC() == redirectTo && event.getTrait() instanceof PlayerFilter) {
+        if (event.getNPC() == redirectNPC && event.getTrait() instanceof PlayerFilter) {
             ((PlayerFilter) event.getTrait()).addChildNPC(npc);
         }
     }
@@ -55,8 +50,8 @@ public class ClickRedirectTrait extends Trait {
     @Override
     public void save(DataKey key) {
         key.removeKey("uuid");
-        if (redirectTo == null)
+        if (redirectNPC == null)
             return;
-        key.setString("uuid", redirectTo.getUniqueId().toString());
+        key.setString("uuid", redirectNPC.getUniqueId().toString());
     }
 }

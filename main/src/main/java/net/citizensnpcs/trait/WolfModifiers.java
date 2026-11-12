@@ -1,11 +1,12 @@
 package net.citizensnpcs.trait;
 
-import java.util.HashMap;
 import java.util.Map;
 
 import org.bukkit.DyeColor;
 import org.bukkit.entity.Wolf;
 import org.bukkit.entity.Wolf.Variant;
+
+import com.google.common.collect.Maps;
 
 import net.citizensnpcs.api.persistence.Persist;
 import net.citizensnpcs.api.trait.Trait;
@@ -95,8 +96,8 @@ public class WolfModifiers extends Trait {
     }
 
     private void updateModifiers() {
-        if (npc.getCosmeticEntity() instanceof Wolf) {
-            Wolf wolf = (Wolf) npc.getCosmeticEntity();
+        if (npc.getEntity() instanceof Wolf) {
+            Wolf wolf = (Wolf) npc.getEntity();
             wolf.setCollarColor(collarColor);
             wolf.setSitting(sitting);
             wolf.setAngry(angry);
@@ -121,7 +122,7 @@ public class WolfModifiers extends Trait {
     }
 
     private static boolean SUPPORT_SET_INTERESTED = true;
-    private static final Map<String, Object> VARIANT_CACHE = new HashMap<>();
+    private static final Map<String, Object> VARIANT_CACHE = Maps.newHashMap();
     static {
         try {
             Wolf.class.getMethod("setInterested", boolean.class);

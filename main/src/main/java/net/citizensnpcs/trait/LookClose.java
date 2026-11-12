@@ -1,24 +1,22 @@
 package net.citizensnpcs.trait;
 
-import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
-import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.metadata.MetadataValue;
 import org.bukkit.potion.PotionEffectType;
 
+import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 
@@ -29,7 +27,6 @@ import net.citizensnpcs.api.persistence.Persist;
 import net.citizensnpcs.api.trait.Trait;
 import net.citizensnpcs.api.trait.TraitName;
 import net.citizensnpcs.api.util.DataKey;
-import net.citizensnpcs.api.util.SpigotUtil;
 import net.citizensnpcs.trait.RotationTrait.PacketRotationSession;
 import net.citizensnpcs.util.NMS;
 import net.citizensnpcs.util.Util;
@@ -39,16 +36,17 @@ import net.citizensnpcs.util.Util;
  *
  */
 @TraitName("lookclose")
-public class LookClose extends Trait {
+public class LookClose extends Trait implements Toggleable {
     @Persist("disablewhilenavigating")
     private boolean disableWhileNavigating = Setting.DISABLE_LOOKCLOSE_WHILE_NAVIGATING.asBoolean();
+    @Persist
+    private Float defaultPitch;
+    @Persist
+    private Float defaultYaw;
     @Persist("enabled")
     private boolean enabled = Setting.DEFAULT_LOOK_CLOSE.asBoolean();
     @Persist
     private boolean enableRandomLook = Setting.DEFAULT_RANDOM_LOOK_CLOSE.asBoolean();
-    private Predicate<Entity> entityFilter;
-    @Persist
-    private String filter;
     @Persist("headonly")
     private boolean headOnly;
     @Persist("linkedbody")
@@ -64,7 +62,6 @@ public class LookClose extends Trait {
     private boolean randomSwitchTargets;
     @Persist
     private float[] randomYawRange = { 0, 360 };
-    @Persist
     private double range = Setting.DEFAULT_LOOK_CLOSE_RANGE.asDouble();
     @Persist("realisticlooking")
     private boolean realisticLooking = Setting.DEFAULT_REALISTIC_LOOKING.asBoolean();
@@ -101,7 +98,7 @@ public class LookClose extends Trait {
      * Finds a new look-close target
      */
     public void findNewTarget() {
-        if (perPlayer) {
+        if (perPlayer && !npc.hasTrait(PacketNPC.class)) {
             lookingAt = null;
             RotationTrait rotationTrait = npc.getOrAddTrait(RotationTrait.class);
             Set<UUID> seen = Sets.newHashSet();
@@ -151,7 +148,7 @@ public class LookClose extends Trait {
             }
         } else {
             double min = Double.MAX_VALUE;
-            Location npcLoc = npc.getEntity().getLocation();
+            Location npcLoc = npc.getStoredLocation();
             for (Player player : getNearbyPlayers()) {
                 double dist = player.getLocation().distance(npcLoc);
                 if (dist > min)
@@ -171,7 +168,7 @@ public class LookClose extends Trait {
     }
 
     private List<Player> getNearbyPlayers() {
-        List<Player> options = new ArrayList<>();
+        List<Player> options = Lists.newArrayList();
         Location npcLoc = npc.getStoredLocation();
         Iterable<Player> nearby = targetNPCs
                 ? npc.getEntity().getNearbyEntities(range, range, range).stream()
@@ -179,13 +176,13 @@ public class LookClose extends Trait {
                         .map(e -> (Player) e).collect(Collectors.toList())
                 : CitizensAPI.getLocationLookup().getNearbyPlayers(npcLoc, range);
         for (Player player : nearby) {
-            if (player == lookingAt || player.getWorld() != npc.getEntity().getWorld())
+            if (player.getWorld() != npc.getEntity().getWorld())
                 continue;
 
             if (!targetNPCs && CitizensAPI.getNPCRegistry().getNPC(player) != null)
                 continue;
 
-            if (isInvisible(player))
+            if (!isValid(player))
                 continue;
 
             options.add(player);
@@ -221,6 +218,12 @@ public class LookClose extends Trait {
         return headOnly;
     }
 
+    /** Packet NPC viewers in range each see the NPC looking at themselves. */
+    public boolean isLookingAtViewer(Player player) {
+        return enabled && npc.isSpawned()
+                && !(npc.getNavigator().isNavigating() && disableWhileNavigating) && isValid(player);
+    }
+
     private boolean isInvisible(Player player) {
         return player.getGameMode() == GameMode.SPECTATOR || player.hasPotionEffect(PotionEffectType.INVISIBILITY)
                 || isPluginVanished(player) || !canSee(player);
@@ -239,29 +242,46 @@ public class LookClose extends Trait {
     }
 
     private boolean isValid(Player entity) {
-        if (entityFilter != null && !entityFilter.test(entity))
-            return false;
         return entity.isOnline() && entity.isValid() && entity.getWorld() == npc.getEntity().getWorld()
                 && entity.getLocation().distance(npc.getStoredLocation()) <= range && !isInvisible(entity);
     }
 
     @Override
     public void load(DataKey key) {
-        entityFilter = null;
-        if (filter != null) {
-            entityFilter = SpigotUtil.parseEntityFilter(filter);
-        }
+        range = key.getDouble("range", range);
     }
 
     /**
      * Enables/disables the trait
      */
     public void lookClose(boolean lookClose) {
+        if (lookClose && !enabled && npc.isSpawned()) {
+            rememberDirection();
+        }
         enabled = lookClose;
+    }
+
+    private void rememberDirection() {
+        defaultYaw = NMS.getHeadYaw(npc.getEntity());
+        defaultPitch = npc.getEntity().getLocation().getPitch();
+    }
+
+    @Override
+    public void onSpawn() {
+        if (defaultYaw == null || defaultPitch == null) {
+            rememberDirection();
+        }
     }
 
     @Override
     public void onDespawn() {
+        RotationTrait rotation = npc.getTraitNullable(RotationTrait.class);
+        if (rotation != null) {
+            for (UUID uuid : sessions.keySet()) {
+                rotation.resetPlayerToPhysicalSession(uuid);
+            }
+        }
+        sessions.clear();
         NPCLookCloseChangeTargetEvent event = new NPCLookCloseChangeTargetEvent(npc, lookingAt, null);
         Bukkit.getPluginManager().callEvent(event);
         if (event.getNewTarget() != null && isValid(event.getNewTarget())) {
@@ -294,6 +314,9 @@ public class LookClose extends Trait {
         t--;
 
         if (!enabled || npc.getNavigator().isNavigating() && disableWhileNavigating()) {
+            if (lookingAt != null || !sessions.isEmpty()) {
+                resetDirection();
+            }
             lookingAt = null;
             return;
         }
@@ -302,8 +325,12 @@ public class LookClose extends Trait {
         if (npc.getNavigator().isNavigating() || npc.getNavigator().isPaused()) {
             npc.getNavigator().setPaused(lookingAt != null);
         }
-        if (lookingAt == null)
+        if (lookingAt == null) {
+            if (npc.hasTrait(PacketNPC.class) && !enableRandomLook) {
+                resetDirection();
+            }
             return;
+        }
 
         RotationTrait rot = npc.getOrAddTrait(RotationTrait.class);
         rot.getGlobalParameters().headOnly(headOnly);
@@ -319,13 +346,24 @@ public class LookClose extends Trait {
         }
     }
 
-    public void setDisableWhileNavigating(boolean set) {
-        disableWhileNavigating = set;
+    private void resetDirection() {
+        if (defaultYaw == null || defaultPitch == null)
+            return;
+        RotationTrait rotation = npc.getOrAddTrait(RotationTrait.class);
+        for (UUID uuid : sessions.keySet()) {
+            rotation.resetPlayerToPhysicalSession(uuid);
+        }
+        sessions.clear();
+        rotation.getPhysicalSession().rotateToHave(defaultYaw, defaultPitch);
     }
 
-    public void setFilter(String filter) {
-        this.filter = filter;
-        this.entityFilter = SpigotUtil.parseEntityFilter(filter);
+    @Override
+    public void save(DataKey key) {
+        key.setDouble("range", range);
+    }
+
+    public void setDisableWhileNavigating(boolean set) {
+        disableWhileNavigating = set;
     }
 
     public void setHeadOnly(boolean headOnly) {
@@ -388,8 +426,9 @@ public class LookClose extends Trait {
         return targetNPCs;
     }
 
+    @Override
     public boolean toggle() {
-        enabled = !enabled;
+        lookClose(!enabled);
         return enabled;
     }
 

@@ -1,12 +1,13 @@
 package net.citizensnpcs.commands.gui;
 
-import java.util.HashMap;
 import java.util.Map;
 import java.util.function.Consumer;
 
 import org.bukkit.Material;
 import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.inventory.ItemStack;
+
+import com.google.common.collect.Maps;
 
 import net.citizensnpcs.api.gui.CitizensInventoryClickEvent;
 import net.citizensnpcs.api.gui.InputMenus;
@@ -64,7 +65,7 @@ public class NPCConfigurator extends InventoryMenuPage {
         }
     }
 
-    private static final Map<Integer, ConfiguratorInfo> SLOT_MAP = new HashMap<>();
+    private static final Map<Integer, ConfiguratorInfo> SLOT_MAP = Maps.newHashMap();
     static {
         SLOT_MAP.put(0, new ConfiguratorInfo(Util.getFallbackMaterial("OAK_SIGN", "SIGN"), evt -> {
             evt.slot.setDescription("Edit NPC name\n" + evt.npc.getName());

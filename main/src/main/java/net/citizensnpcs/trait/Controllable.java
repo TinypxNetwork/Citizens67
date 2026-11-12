@@ -1,8 +1,6 @@
 package net.citizensnpcs.trait;
 
 import java.util.List;
-import java.util.Locale;
-import java.util.function.Function;
 
 import org.bukkit.Location;
 import org.bukkit.entity.EnderDragon;
@@ -21,7 +19,6 @@ import net.citizensnpcs.api.event.NPCRightClickEvent;
 import net.citizensnpcs.api.npc.NPC;
 import net.citizensnpcs.api.persistence.Persist;
 import net.citizensnpcs.api.trait.Trait;
-import net.citizensnpcs.api.trait.TraitEventHandler;
 import net.citizensnpcs.api.trait.TraitName;
 import net.citizensnpcs.api.trait.trait.Owner;
 import net.citizensnpcs.util.NMS;
@@ -34,8 +31,8 @@ import net.citizensnpcs.util.Util;
  * e.g. arrow keys.
  */
 @TraitName("controllable")
-public class Controllable extends Trait {
-    private MovementController controller;
+public class Controllable extends Trait implements Toggleable {
+    private MovementController controller = new GroundController();
     @Persist
     private BuiltInControls controls;
     @Persist
@@ -47,13 +44,40 @@ public class Controllable extends Trait {
         super("controllable");
     }
 
-    private Player getFirstPlayer() {
-        return (Player) NMS.getPassengers(npc.getEntity()).stream().filter(e -> e instanceof Player).findFirst()
-                .orElse(null);
+    private void enterOrLeaveVehicle(Player player) {
+        List<Entity> passengers = NMS.getPassengers(player);
+        if (passengers.size() > 0) {
+            if (passengers.contains(player)) {
+                player.leaveVehicle();
+            }
+            return;
+        }
+        if (!player.hasPermission("citizens.npc.controllable." + Util.prettyEnum(npc.getEntity().getType()))
+                || !player.hasPermission("citizens.npc.controllable")
+                || ownerRequired && !npc.getOrAddTrait(Owner.class).isOwnedBy(player))
+            return;
+
+        NMS.mount(npc.getEntity(), player);
     }
 
     public boolean isEnabled() {
         return enabled;
+    }
+
+    private void loadController() {
+        if (controls != null) {
+            controller = controls.create(this);
+            return;
+        }
+        if (!(npc.getEntity() instanceof LivingEntity) && !(npc.getEntity() instanceof Vehicle)) {
+            controller = new LookAirController();
+            return;
+        }
+        if (Util.isAlwaysFlyable(npc.getEntity().getType())) {
+            controller = new PlayerInputAirController();
+        } else {
+            controller = new GroundController();
+        }
     }
 
     /**
@@ -65,22 +89,24 @@ public class Controllable extends Trait {
      */
     public boolean mount(Player toMount) {
         List<Entity> passengers = NMS.getPassengers(npc.getEntity());
-        boolean alreadyMounted = false;
+        if (passengers.size() != 0)
+            return false;
+        boolean found = false;
         for (Entity passenger : passengers) {
             if (passenger != null && passenger == toMount) {
-                alreadyMounted = true;
+                found = true;
                 break;
             }
         }
-        if (alreadyMounted)
+        if (found)
             return false;
-        NMS.mount(npc.getEntity(), toMount);
+        enterOrLeaveVehicle(toMount);
         return true;
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
     private void onPlayerInteract(PlayerInteractEvent event) {
-        if (!enabled)
+        if (!npc.isSpawned() || !enabled)
             return;
         Action performed = event.getAction();
         if (!NMS.getPassengers(npc.getEntity()).contains(event.getPlayer()))
@@ -103,63 +129,27 @@ public class Controllable extends Trait {
         }
     }
 
-    @TraitEventHandler
+    @EventHandler
     private void onRightClick(NPCRightClickEvent event) {
-        if (!enabled)
+        if (!enabled || !npc.isSpawned() || !event.getNPC().equals(npc))
             return;
-        if (!event.getClicker().hasPermission("citizens.npc.controllable")
-                || !event.getClicker().hasPermission(
-                        "citizens.npc.controllable." + npc.getEntity().getType().name().toLowerCase(Locale.ROOT))
-                || ownerRequired && !npc.getOrAddTrait(Owner.class).isOwnedBy(event.getClicker()))
-            return;
-        mount(event.getClicker());
         controller.rightClickEntity(event);
         event.setDelayedCancellation(true);
     }
 
     @Override
     public void onSpawn() {
-        if (controls != null) {
-            controller = controls.factory.apply(npc);
-            return;
-        }
-        if (!(npc.getEntity() instanceof LivingEntity) && !(npc.getEntity() instanceof Vehicle)) {
-            controller = new LookAirController(npc);
-            return;
-        }
-        if (Util.isAlwaysFlyable(npc.getEntity().getType())) {
-            controller = new PlayerInputAirController(npc);
-        } else {
-            controller = new GroundController(npc);
-        }
+        loadController();
     }
 
     @Override
     public void run() {
         if (!enabled || !npc.isSpawned())
             return;
-        if (npc.getNavigator().isNavigating())
+        List<Entity> passengers = NMS.getPassengers(npc.getEntity());
+        if (passengers.size() == 0 || !(passengers.get(0) instanceof Player) || npc.getNavigator().isNavigating())
             return;
-
-        Player player = getFirstPlayer();
-        if (player == null)
-            return;
-
-        ControllableInput input = new ControllableInput();
-        if (SUPPORTS_PLAYER_INPUT_EVENT) {
-            input.forward = player.getCurrentInput().isForward() ? 1 : player.getCurrentInput().isBackward() ? -1 : 0;
-            input.horizontal = player.getCurrentInput().isLeft() ? 1 : player.getCurrentInput().isRight() ? -1 : 0;
-            input.jump = player.getCurrentInput().isJump();
-            input.sneak = player.getCurrentInput().isSneak();
-            input.sprint = player.getCurrentInput().isSprint();
-        } else {
-            input.forward = NMS.getForwardBackwardMovement(player);
-            input.horizontal = NMS.getXZMovement(player);
-            input.jump = NMS.shouldJump(player);
-            input.sneak = NMS.isSneaking(player);
-            input.sprint = player.isSprinting();
-        }
-        controller.run(player, input);
+        controller.run((Player) passengers.get(0));
     }
 
     public void setControls(BuiltInControls controls) {
@@ -169,6 +159,24 @@ public class Controllable extends Trait {
     public boolean setEnabled(boolean enabled) {
         this.enabled = enabled;
         return enabled;
+    }
+
+    private void setMountedYaw(Entity entity) {
+        if (entity instanceof EnderDragon || !Setting.USE_BOAT_CONTROLS.asBoolean())
+            return; // EnderDragon handles this separately
+        Location loc = entity.getLocation();
+        Vector vel = entity.getVelocity();
+        if (vel.lengthSquared() == 0)
+            return;
+
+        double tX = loc.getX() + vel.getX();
+        double tZ = loc.getZ() + vel.getZ();
+        if (loc.getZ() > tZ) {
+            loc.setYaw((float) -Math.toDegrees(Math.atan((loc.getX() - tX) / (loc.getZ() - tZ))) + 180F);
+        } else if (loc.getZ() < tZ) {
+            loc.setYaw((float) -Math.toDegrees(Math.atan((loc.getX() - tX) / (loc.getZ() - tZ))));
+        }
+        NMS.look(entity, loc.getYaw(), loc.getPitch());
     }
 
     /**
@@ -181,46 +189,81 @@ public class Controllable extends Trait {
         this.ownerRequired = ownerRequired;
     }
 
+    @Override
     public boolean toggle() {
         enabled = !enabled;
-        if (!enabled) {
-            Player player = getFirstPlayer();
-            if (player != null) {
-                player.leaveVehicle();
-            }
+        if (!enabled && NMS.getPassengers(npc.getEntity()).size() > 0) {
+            NMS.getPassengers(npc.getEntity()).get(0).leaveVehicle();
         }
         return enabled;
     }
 
+    private double updateHorizontalSpeed(Entity handle, Entity passenger, double speed, float speedMod,
+            double maxSpeed) {
+        Vector vel = handle.getVelocity();
+        double oldSpeed = Math.sqrt(vel.getX() * vel.getX() + vel.getZ() * vel.getZ());
+        double horizontal = NMS.getHorizontalMovement(passenger);
+        if (Math.abs(Math.abs(horizontal) - 0.98) > 0.02)
+            return speed;
+        double yaw = passenger.getLocation().getYaw();
+        if (horizontal > 0.0D) {
+            double dXcos = -Math.sin(yaw * Math.PI / 180.0F);
+            double dXsin = Math.cos(yaw * Math.PI / 180.0F);
+
+            vel = vel.setX(dXcos * speed * speedMod).setZ(dXsin * speed * speedMod);
+        }
+        vel = vel.add(new Vector(
+                passenger.getVelocity().getX() * speedMod * Setting.CONTROLLABLE_GROUND_DIRECTION_MODIFIER.asDouble(),
+                0D,
+                passenger.getVelocity().getZ() * speedMod * Setting.CONTROLLABLE_GROUND_DIRECTION_MODIFIER.asDouble()))
+                .multiply(0.98);
+
+        double newSpeed = Math.sqrt(vel.getX() * vel.getX() + vel.getZ() * vel.getZ());
+        if (newSpeed > maxSpeed) {
+            vel = vel.multiply(new Vector(maxSpeed / newSpeed, 1, maxSpeed / newSpeed));
+            newSpeed = maxSpeed;
+        }
+        handle.setVelocity(vel);
+
+        if (newSpeed > oldSpeed && speed < maxSpeed) {
+            return (float) Math.min(maxSpeed, speed + (maxSpeed - speed) / 50.0D);
+        } else {
+            return (float) Math.max(0, speed - speed / 50.0D);
+        }
+    }
+
     public enum BuiltInControls {
-        AIR(PlayerInputAirController::new),
-        GROUND(GroundController::new),
-        GROUND_JUMPLESS(JumplessGroundController::new),
-        LOOK_AIR(LookAirController::new);
+        AIR {
+            @Override
+            MovementController create(Controllable trait) {
+                return trait.new PlayerInputAirController();
+            }
+        },
+        GROUND {
+            @Override
+            MovementController create(Controllable trait) {
+                return trait.new GroundController();
+            }
+        },
+        GROUND_JUMPLESS {
+            @Override
+            MovementController create(Controllable trait) {
+                return trait.new JumplessGroundController();
+            }
+        },
+        LOOK_AIR {
+            @Override
+            MovementController create(Controllable trait) {
+                return trait.new LookAirController();
+            }
+        };
 
-        private final Function<NPC, MovementController> factory;
-
-        private BuiltInControls(Function<NPC, MovementController> factory) {
-            this.factory = factory;
-        }
+        abstract MovementController create(Controllable trait);
     }
 
-    private static class ControllableInput {
-        double forward;
-        double horizontal;
-        boolean jump;
-        boolean sneak;
-        boolean sprint;
-    }
-
-    public static class GroundController implements MovementController {
+    public class GroundController implements MovementController {
         private int jumpTicks = 0;
-        private final NPC npc;
         private double speed = 0.07D;
-
-        public GroundController(NPC npc) {
-            this.npc = npc;
-        }
 
         @Override
         public void leftClick(PlayerInteractEvent event) {
@@ -232,18 +275,19 @@ public class Controllable extends Trait {
 
         @Override
         public void rightClickEntity(NPCRightClickEvent event) {
+            enterOrLeaveVehicle(event.getClicker());
         }
 
         @Override
-        public void run(Player rider, ControllableInput input) {
+        public void run(Player rider) {
             boolean onGround = NMS.isOnGround(npc.getEntity());
-            float speedMod = npc.getNavigator().getDefaultParameters()
+            float impulse = npc.getNavigator().getDefaultParameters()
                     .modifiedSpeed(onGround ? GROUND_SPEED : AIR_SPEED);
             if (!Util.isHorse(npc.getEntity().getType())) {
-                speed = updateSpeed(npc.getEntity(), NMS.getYaw(rider), input, speed, speedMod,
+                speed = updateHorizontalSpeed(npc.getEntity(), rider, speed, impulse,
                         Setting.MAX_CONTROLLABLE_GROUND_SPEED.asDouble());
             }
-            if (onGround && jumpTicks <= 0 && input.jump) {
+            if (onGround && jumpTicks <= 0 && NMS.shouldJump(rider)) {
                 npc.getEntity().setVelocity(npc.getEntity().getVelocity().setY(JUMP_VELOCITY));
                 jumpTicks = 10;
             }
@@ -256,13 +300,8 @@ public class Controllable extends Trait {
         private static final float JUMP_VELOCITY = 0.5F;
     }
 
-    public static class JumplessGroundController implements MovementController {
-        private final NPC npc;
+    public class JumplessGroundController implements MovementController {
         private double speed = 0.07D;
-
-        public JumplessGroundController(NPC npc) {
-            this.npc = npc;
-        }
 
         @Override
         public void leftClick(PlayerInteractEvent event) {
@@ -274,15 +313,16 @@ public class Controllable extends Trait {
 
         @Override
         public void rightClickEntity(NPCRightClickEvent event) {
+            enterOrLeaveVehicle(event.getClicker());
         }
 
         @Override
-        public void run(Player rider, ControllableInput input) {
+        public void run(Player rider) {
             boolean onGround = NMS.isOnGround(npc.getEntity());
-            float speedMod = npc.getNavigator().getDefaultParameters()
+            float impulse = npc.getNavigator().getDefaultParameters()
                     .modifiedSpeed(onGround ? GROUND_SPEED : AIR_SPEED);
             if (!Util.isHorse(npc.getEntity().getType())) {
-                speed = updateSpeed(npc.getEntity(), NMS.getYaw(rider), input, speed, speedMod,
+                speed = updateHorizontalSpeed(npc.getEntity(), rider, speed, impulse,
                         Setting.MAX_CONTROLLABLE_GROUND_SPEED.asDouble());
             }
             setMountedYaw(npc.getEntity());
@@ -292,13 +332,8 @@ public class Controllable extends Trait {
         private static final float GROUND_SPEED = 0.5F;
     }
 
-    public static class LookAirController implements MovementController {
-        private final NPC npc;
+    public class LookAirController implements MovementController {
         private boolean paused = false;
-
-        public LookAirController(NPC npc) {
-            this.npc = npc;
-        }
 
         @Override
         public void leftClick(PlayerInteractEvent event) {
@@ -312,10 +347,11 @@ public class Controllable extends Trait {
 
         @Override
         public void rightClickEntity(NPCRightClickEvent event) {
+            enterOrLeaveVehicle(event.getClicker());
         }
 
         @Override
-        public void run(Player rider, ControllableInput input) {
+        public void run(Player rider) {
             if (paused) {
                 npc.getEntity().setVelocity(npc.getEntity().getVelocity().setY(0.001));
                 return;
@@ -334,17 +370,12 @@ public class Controllable extends Trait {
 
         void rightClickEntity(NPCRightClickEvent event);
 
-        void run(Player rider, ControllableInput input);
+        void run(Player rider);
     }
 
-    public static class PlayerInputAirController implements MovementController {
-        private final NPC npc;
+    public class PlayerInputAirController implements MovementController {
         private boolean paused = false;
         private double speed;
-
-        public PlayerInputAirController(NPC npc) {
-            this.npc = npc;
-        }
 
         @Override
         public void leftClick(PlayerInteractEvent event) {
@@ -358,75 +389,23 @@ public class Controllable extends Trait {
 
         @Override
         public void rightClickEntity(NPCRightClickEvent event) {
+            enterOrLeaveVehicle(event.getClicker());
         }
 
         @Override
-        public void run(Player rider, ControllableInput input) {
+        public void run(Player rider) {
             if (paused) {
                 npc.getEntity().setVelocity(npc.getEntity().getVelocity().setY(0.001F));
                 return;
             }
-            speed = updateSpeed(npc.getEntity(), NMS.getYaw(rider), input, speed, 1F,
+            speed = updateHorizontalSpeed(npc.getEntity(), rider, speed, 1F,
                     Setting.MAX_CONTROLLABLE_FLIGHT_SPEED.asDouble());
-            if (input.jump) {
+            boolean shouldJump = NMS.shouldJump(rider);
+            if (shouldJump) {
                 npc.getEntity().setVelocity(npc.getEntity().getVelocity().setY(0.25F));
             }
             npc.getEntity().setVelocity(npc.getEntity().getVelocity().multiply(new Vector(1, 0.98, 1)));
             setMountedYaw(npc.getEntity());
-        }
-    }
-
-    private static void setMountedYaw(Entity entity) {
-        if (entity instanceof EnderDragon || !Setting.USE_BOAT_CONTROLS.asBoolean())
-            return; // EnderDragon handles this separately
-        Location loc = entity.getLocation();
-        Vector vel = entity.getVelocity();
-        if (vel.lengthSquared() == 0)
-            return;
-
-        double tX = loc.getX() + vel.getX();
-        double tZ = loc.getZ() + vel.getZ();
-        if (loc.getZ() > tZ) {
-            loc.setYaw((float) -Math.toDegrees(Math.atan((loc.getX() - tX) / (loc.getZ() - tZ))) + 180F);
-        } else if (loc.getZ() < tZ) {
-            loc.setYaw((float) -Math.toDegrees(Math.atan((loc.getX() - tX) / (loc.getZ() - tZ))));
-        }
-        NMS.look(entity, loc.getYaw(), loc.getPitch());
-    }
-
-    private static double updateSpeed(Entity handle, double yaw, ControllableInput input, double speed, float speedMod,
-            double maxSpeed) {
-        yaw = Math.toRadians(yaw);
-        Vector vel = handle.getVelocity();
-        double oldSpeed = Math.sqrt(vel.getX() * vel.getX() + vel.getZ() * vel.getZ());
-        if (input.forward > 0) {
-            vel = vel.setX(-Math.sin(yaw) * speed * speedMod).setZ(Math.cos(yaw) * speed * speedMod);
-        }
-        vel.add(new Vector(Math.sin(yaw + Math.PI / 2), 0D, -Math.cos(yaw + Math.PI / 2))
-                .multiply(speedMod * Setting.CONTROLLABLE_GROUND_DIRECTION_MODIFIER.asDouble() * input.horizontal));
-        vel.multiply(0.98);
-
-        double newSpeed = Math.sqrt(vel.getX() * vel.getX() + vel.getZ() * vel.getZ());
-        if (newSpeed > maxSpeed) {
-            vel = vel.multiply(new Vector(maxSpeed / newSpeed, 1, maxSpeed / newSpeed));
-            newSpeed = maxSpeed;
-        }
-        handle.setVelocity(vel);
-
-        if (newSpeed > oldSpeed && speed < maxSpeed) {
-            return (float) Math.min(maxSpeed, speed + (maxSpeed - speed) / 50.0D);
-        } else {
-            return (float) Math.max(0, speed - speed / 50.0D);
-        }
-    }
-
-    private static boolean SUPPORTS_PLAYER_INPUT_EVENT = true;
-
-    static {
-        try {
-            Class.forName("org.bukkit.event.player.PlayerInputEvent");
-        } catch (ClassNotFoundException e) {
-            SUPPORTS_PLAYER_INPUT_EVENT = false;
         }
     }
 }

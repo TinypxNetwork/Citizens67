@@ -2,6 +2,7 @@ package net.citizensnpcs.util;
 
 import java.text.DecimalFormat;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.List;
@@ -9,12 +10,14 @@ import java.util.Locale;
 import java.util.Random;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
-import org.bukkit.Keyed;
+import org.bukkit.Color;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
@@ -34,15 +37,20 @@ import org.bukkit.util.Vector;
 
 import com.google.common.base.Joiner;
 import com.google.common.base.Splitter;
+import com.google.common.collect.Iterables;
 import com.google.common.io.ByteArrayDataOutput;
 import com.google.common.io.ByteStreams;
+import com.google.common.primitives.Ints;
 
+import net.citizensnpcs.Settings.Setting;
 import net.citizensnpcs.api.CitizensAPI;
+import net.citizensnpcs.api.ai.speech.SpeechContext;
+import net.citizensnpcs.api.ai.speech.Talkable;
+import net.citizensnpcs.api.ai.speech.TalkableEntity;
 import net.citizensnpcs.api.event.NPCCollisionEvent;
 import net.citizensnpcs.api.event.NPCPistonPushEvent;
 import net.citizensnpcs.api.event.NPCPushEvent;
 import net.citizensnpcs.api.npc.NPC;
-import net.citizensnpcs.api.trait.trait.Equipment.EquipmentSlot;
 import net.citizensnpcs.api.util.BoundingBox;
 import net.citizensnpcs.api.util.Messaging;
 import net.citizensnpcs.api.util.Placeholders;
@@ -69,6 +77,22 @@ public class Util {
         return event.isCancelled();
     }
 
+    public static <T> T callPossiblySync(Callable<T> callable, boolean sync) {
+        if (!sync) {
+            try {
+                return callable.call();
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+        try {
+            return Bukkit.getScheduler().callSyncMethod(CitizensAPI.getPlugin(), callable).get();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return null;
+    }
+
     public static Vector callPushEvent(NPC npc, double x, double y, double z) {
         boolean allowed = npc == null || !npc.isProtected()
                 || npc.data().has(NPC.Metadata.COLLIDABLE) && npc.data().<Boolean> get(NPC.Metadata.COLLIDABLE);
@@ -88,14 +112,13 @@ public class Util {
      * Clamps the rotation angle to [-180, 180]
      */
     public static float clamp(float angle) {
-        float d = (float) (angle % 360.0);
-        if (d >= 180.0) {
-            d -= 360.0;
+        while (angle < -180.0F) {
+            angle += 360.0F;
         }
-        if (d < -180.0) {
-            d += 360.0;
+        while (angle >= 180.0F) {
+            angle -= 360.0F;
         }
-        return d;
+        return angle;
     }
 
     public static float clamp(float angle, float min, float max, float d) {
@@ -171,6 +194,10 @@ public class Util {
         return center;
     }
 
+    public static Scoreboard getDummyScoreboard() {
+        return DUMMY_SCOREBOARD;
+    }
+
     public static Entity getEntity(UUID uuid) {
         if (SUPPORTS_BUKKIT_GETENTITY)
             return Bukkit.getEntity(uuid);
@@ -217,7 +244,7 @@ public class Util {
     }
 
     public static Random getFastRandom() {
-        return RANDOM;
+        return new XORShiftRNG();
     }
 
     public static String getTeamName(UUID id) {
@@ -254,13 +281,13 @@ public class Util {
 
     public static boolean isAlwaysFlyable(EntityType type) {
         if (type.name().equals("VEX") || type.name().equals("PARROT") || type.name().equals("ALLAY")
-                || type.name().contains("GHAST") || type.name().equals("BEE") || type.name().equals("PHANTOM")
-                || type.name().equals("BREEZE"))
+                || type.name().equals("BEE") || type.name().equals("PHANTOM") || type.name().equals("BREEZE"))
             return true;
         switch (type) {
             case BAT:
             case BLAZE:
             case ENDER_DRAGON:
+            case GHAST:
             case WITHER:
                 return true;
             default:
@@ -270,11 +297,6 @@ public class Util {
 
     public static boolean isBedrockName(String name) {
         return BEDROCK_NAME_PREFIX != null ? name.startsWith(BEDROCK_NAME_PREFIX) : false;
-    }
-
-    public static boolean isEquippable(ItemStack stack, EquipmentSlot slot) {
-        return SUPPORTS_HAS_EQUIPPABLE && stack.hasItemMeta() && stack.getItemMeta().hasEquippable()
-                && stack.getItemMeta().getEquippable().getSlot() == slot.toBukkit();
     }
 
     public static boolean isHorse(EntityType type) {
@@ -311,12 +333,6 @@ public class Util {
         }
     }
 
-    public static <T extends Keyed> String listValuesPretty(Class<T> values) {
-        return "<yellow>" + Joiner.on("<green>, <yellow>")
-                .join(Bukkit.getRegistry(values).stream().map(k -> k.getKey().getKey()).iterator()).replace('_', ' ')
-                .toLowerCase(Locale.ROOT);
-    }
-
     public static String listValuesPretty(Object[] values) {
         return "<yellow>" + Joiner.on("<green>, <yellow>").join(values).replace('_', ' ').toLowerCase(Locale.ROOT);
     }
@@ -327,6 +343,7 @@ public class Util {
             if (toMatch.equalsIgnoreCase(check.name())
                     || toMatch.equalsIgnoreCase("item") && check.name().equals("DROPPED_ITEM"))
                 return check; // check for an exact match first
+
         }
         for (T check : values) {
             String name = check.name().toLowerCase(Locale.ROOT);
@@ -359,6 +376,49 @@ public class Util {
             }
         }
         return list;
+    }
+
+    public static Color parseColor(String string) {
+        if (!string.contains(","))
+            return Color.fromRGB(Integer.decode(string));
+        List<Integer> list = Splitter.on(',').splitToStream(string).map(Integer::parseInt).collect(Collectors.toList());
+        if (list.size() == 3) {
+            return Color.fromRGB(list.get(0), list.get(1), list.get(2));
+        } else if (list.size() == 4) {
+            return Color.fromARGB(list.get(0), list.get(1), list.get(2), list.get(3));
+        }
+        throw new NumberFormatException();
+    }
+
+    public static ItemStack parseItemStack(ItemStack stack, String item) {
+        if (stack == null || stack.getType() == Material.AIR) {
+            stack = new ItemStack(Material.STONE, 1);
+        }
+        if (item.charAt(0) == '{') {
+            try {
+                Bukkit.getUnsafe().modifyItemStack(stack, item);
+            } catch (Throwable t) {
+                t.printStackTrace();
+            }
+        } else if (!item.isEmpty()) {
+            String[] parts = Iterables.toArray(Splitter.on(',').split(item), String.class);
+            if (parts.length == 0)
+                return stack;
+            stack.setType(Material.matchMaterial(parts[0]));
+            if (parts.length > 1) {
+                stack.setAmount(Ints.tryParse(parts[1]));
+            }
+            if (parts.length > 2) {
+                Integer durability = Ints.tryParse(parts[2]);
+                stack.setDurability(durability.shortValue());
+            }
+        }
+        return stack;
+    }
+
+    public static int parseTicks(String raw) {
+        Duration duration = SpigotUtil.parseDuration(raw, null);
+        return duration == null ? -1 : toTicks(duration);
     }
 
     public static String possiblyConvertToBedrockName(String name) {
@@ -398,14 +458,12 @@ public class Util {
                 + " clicker " + clicker);
 
         if (!player) {
-            CitizensAPI.getScheduler().runTask(() -> {
-                Bukkit.getServer().dispatchCommand(Bukkit.getConsoleSender(), interpolatedCommand);
-            });
+            Bukkit.getServer().dispatchCommand(Bukkit.getConsoleSender(), interpolatedCommand);
             return;
         }
         boolean wasOp = clicker.isOp();
         if (op) {
-            NMS.setOpWithoutSaving(clicker, true);
+            clicker.setOp(true);
         }
         try {
             if (bungeeServer != null) {
@@ -421,10 +479,7 @@ public class Util {
             t.printStackTrace();
         } finally {
             if (op) {
-                if (!wasOp) {
-                    // Avoid a disk I/O operation in Player#setOp(boolean)
-                    NMS.setOpWithoutSaving(clicker, false);
-                }
+                clicker.setOp(wasOp);
             }
         }
     }
@@ -450,19 +505,122 @@ public class Util {
         return name.replaceFirst(Pattern.quote(BEDROCK_NAME_PREFIX), "");
     }
 
+    public static void talk(SpeechContext context) {
+        if (context.getTalker() == null)
+            return;
+        NPC npc = CitizensAPI.getNPCRegistry().getNPC(context.getTalker().getEntity());
+        if (npc == null)
+            return;
+
+        // chat to the world with CHAT_FORMAT and CHAT_RANGE settings
+        if (!context.hasRecipients()) {
+            String text = Setting.CHAT_FORMAT.asString().replace("<text>", context.getMessage());
+            talkToBystanders(npc, text, context);
+            return;
+        }
+
+        // Assumed recipients at this point
+        else if (context.size() <= 1) {
+            String text = Setting.CHAT_FORMAT_TO_TARGET.asString().replace("<text>", context.getMessage());
+            String targetName = "";
+            // For each recipient
+            for (Talkable talkable : context) {
+                talkable.talkTo(context, text);
+                targetName = talkable.getName();
+            }
+            // Check if bystanders hear targeted chat
+            if (!Setting.CHAT_BYSTANDERS_HEAR_TARGETED_CHAT.asBoolean())
+                return;
+            // Format message with config setting and send to bystanders
+            String bystanderText = Setting.CHAT_FORMAT_TO_BYSTANDERS.asString().replace("<target>", targetName)
+                    .replace("<text>", context.getMessage());
+            talkToBystanders(npc, bystanderText, context);
+            return;
+        }
+
+        else { // Multiple recipients
+            String text = Setting.CHAT_FORMAT_TO_TARGET.asString().replace("<text>", context.getMessage());
+            List<String> targetNames = new ArrayList<>();
+            // Talk to each recipient
+            for (Talkable talkable : context) {
+                talkable.talkTo(context, text);
+                targetNames.add(talkable.getName());
+            }
+            if (!Setting.CHAT_BYSTANDERS_HEAR_TARGETED_CHAT.asBoolean())
+                return;
+            String targets = "";
+            int max = Setting.CHAT_MAX_NUMBER_OF_TARGETS.asInt();
+            String[] format = Setting.CHAT_MULTIPLE_TARGETS_FORMAT.asString().split("\\|");
+            if (format.length != 4) {
+                Messaging.severe("npc.chat.options.multiple-targets-format invalid!");
+            }
+            if (max == 1) {
+                targets = format[0].replace("<target>", targetNames.get(0)) + format[3];
+            } else if (max == 2 || targetNames.size() == 2) {
+                if (targetNames.size() == 2) {
+                    targets = format[0].replace("<target>", targetNames.get(0))
+                            + format[2].replace("<target>", targetNames.get(1));
+                } else {
+                    targets = format[0].replace("<target>", targetNames.get(0))
+                            + format[1].replace("<target>", targetNames.get(1)) + format[3];
+                }
+            } else if (max >= 3) {
+                targets = format[0].replace("<target>", targetNames.get(0));
+
+                int x = 1;
+                for (x = 1; x < max - 1; x++) {
+                    if (targetNames.size() - 1 == x) {
+                        break;
+                    }
+                    targets = targets + format[1].replace("<npc>", targetNames.get(x));
+                }
+                if (targetNames.size() == max) {
+                    targets = targets + format[2].replace("<npc>", targetNames.get(x));
+                } else {
+                    targets = targets + format[3];
+                }
+            }
+            String bystanderText = Setting.CHAT_FORMAT_WITH_TARGETS_TO_BYSTANDERS.asString()
+                    .replace("<targets>", targets).replace("<text>", context.getMessage());
+            talkToBystanders(npc, bystanderText, context);
+        }
+    }
+
+    private static void talkToBystanders(NPC npc, String text, SpeechContext context) {
+        // Get list of nearby entities
+        List<Entity> bystanderEntities = npc.getEntity().getNearbyEntities(Setting.CHAT_RANGE.asDouble(),
+                Setting.CHAT_RANGE.asDouble(), Setting.CHAT_RANGE.asDouble());
+        for (Entity bystander : bystanderEntities) {
+            boolean shouldTalk = true;
+            if (!Setting.TALK_CLOSE_TO_NPCS.asBoolean() && CitizensAPI.getNPCRegistry().isNPC(bystander)) {
+                shouldTalk = false;
+            }
+            if (context.hasRecipients()) {
+                for (Talkable target : context) {
+                    if (target.getEntity().equals(bystander)) {
+                        shouldTalk = false;
+                        break;
+                    }
+                }
+            }
+            if (shouldTalk) {
+                new TalkableEntity(bystander).talkNear(context, text);
+            }
+        }
+    }
+
+    public static int toTicks(Duration delay) {
+        return (int) (TimeUnit.MILLISECONDS.convert(delay.getSeconds(), TimeUnit.SECONDS)
+                + TimeUnit.MILLISECONDS.convert(delay.getNano(), TimeUnit.NANOSECONDS)) / 50;
+    }
+
     private static String BEDROCK_NAME_PREFIX = ".";
-    private static final Random RANDOM = new XORShiftRNG();
+    private static final Scoreboard DUMMY_SCOREBOARD = Bukkit.getScoreboardManager().getNewScoreboard();
     private static boolean SUPPORTS_BUKKIT_GETENTITY = true;
-    private static boolean SUPPORTS_HAS_EQUIPPABLE = false;
     private static final DecimalFormat TWO_DIGIT_DECIMAL = new DecimalFormat();
+
     static {
         TWO_DIGIT_DECIMAL.setMaximumFractionDigits(2);
-        try {
-            ItemMeta.class.getMethod("hasEquippable");
-            SUPPORTS_HAS_EQUIPPABLE = true;
-        } catch (NoSuchMethodException e) {
-            SUPPORTS_HAS_EQUIPPABLE = false;
-        }
         try {
             Bukkit.class.getMethod("getEntity", UUID.class);
         } catch (Exception e) {

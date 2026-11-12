@@ -2,9 +2,9 @@ package net.citizensnpcs;
 
 import java.util.Optional;
 
-import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.OfflinePlayer;
+import org.bukkit.command.CommandSender;
 
 import me.clip.placeholderapi.expansion.PlaceholderExpansion;
 import net.citizensnpcs.api.CitizensAPI;
@@ -25,7 +25,7 @@ public class CitizensPlaceholders extends PlaceholderExpansion {
 
     @Override
     public String getIdentifier() {
-        return "citizens";
+        return "citizensplaceholder";
     }
 
     @Override
@@ -35,20 +35,18 @@ public class CitizensPlaceholders extends PlaceholderExpansion {
 
     @Override
     public String onRequest(OfflinePlayer player, String params) {
-        NPC selected = player == null || !player.isOnline() ? selector.getSelected(Bukkit.getConsoleSender())
-                : selector.getSelected(player.getPlayer());
-        if (selected == null && !params.equals("nearest_npc_id"))
+        if (player == null || !player.isOnline())
             return null;
+
+        NPC selected = selector.getSelected((CommandSender) player);
         switch (params) {
-            case "selected_npc_name":
+            case "citizens_selected_npc_name":
                 return selected == null ? "" : selected.getFullName();
-            case "selected_npc_id":
+            case "citizens_selected_npc_id":
                 return selected == null ? "" : Integer.toString(selected.getId());
-            case "selected_npc_uuid":
+            case "citizens_selected_npc_uuid":
                 return selected == null ? "" : selected.getUniqueId().toString();
-            case "nearest_npc_id":
-                if (player == null || !player.isOnline())
-                    return null;
+            case "citizens_nearest_npc_id":
                 Location location = player.getPlayer().getLocation();
 
                 Optional<NPC> closestNPC = player.getPlayer().getNearbyEntities(25, 25, 25).stream()

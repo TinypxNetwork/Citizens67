@@ -6,14 +6,15 @@ import org.bukkit.entity.Display.Billboard;
 import org.bukkit.entity.Display.Brightness;
 import org.bukkit.entity.EntityType;
 import org.bukkit.util.Transformation;
+import org.bukkit.util.Vector;
 import org.joml.Quaternionf;
-import org.joml.Vector3f;
 
 import net.citizensnpcs.api.command.Command;
 import net.citizensnpcs.api.command.CommandContext;
 import net.citizensnpcs.api.command.Flag;
 import net.citizensnpcs.api.command.Requirements;
 import net.citizensnpcs.api.command.exception.CommandException;
+import net.citizensnpcs.api.command.exception.CommandUsageException;
 import net.citizensnpcs.api.npc.NPC;
 import net.citizensnpcs.api.persistence.Persist;
 import net.citizensnpcs.api.trait.Trait;
@@ -21,7 +22,7 @@ import net.citizensnpcs.api.trait.TraitName;
 import net.citizensnpcs.api.util.Messaging;
 
 @TraitName("displaytrait")
-public class DisplayTrait extends Trait implements Cloneable {
+public class DisplayTrait extends Trait {
     @Persist
     private Billboard billboard;
     @Persist
@@ -35,15 +36,9 @@ public class DisplayTrait extends Trait implements Cloneable {
     @Persist
     private Quaternionf leftRotation;
     @Persist
-    private Vector3f offset;
-    @Persist
     private Quaternionf rightRotation;
     @Persist
-    private Vector3f scale;
-    @Persist
-    private Float shadowRadius;
-    @Persist
-    private Float shadowStrength;
+    private Vector scale;
     @Persist
     private Integer skyLight;
     @Persist
@@ -56,34 +51,8 @@ public class DisplayTrait extends Trait implements Cloneable {
     }
 
     @Override
-    public DisplayTrait clone() {
-        DisplayTrait copy = new DisplayTrait();
-        copy.billboard = billboard;
-        copy.blockLight = blockLight;
-        copy.height = height;
-        copy.interpolationDelay = interpolationDelay;
-        copy.interpolationDuration = interpolationDuration;
-        copy.leftRotation = leftRotation == null ? null : new Quaternionf(leftRotation);
-        copy.rightRotation = rightRotation == null ? null : new Quaternionf(rightRotation);
-        copy.offset = offset == null ? null : new Vector3f(offset);
-        copy.scale = scale == null ? null : new Vector3f(scale);
-        copy.shadowRadius = shadowRadius;
-        copy.shadowStrength = shadowStrength;
-        copy.skyLight = skyLight;
-        copy.viewRange = viewRange;
-        copy.width = width;
-        return copy;
-    }
-
-    public Billboard getBillboard() {
-        return billboard;
-    }
-
-    @Override
     public void onSpawn() {
-        if (!(npc.getCosmeticEntity() instanceof Display))
-            return;
-        Display display = (Display) npc.getCosmeticEntity();
+        Display display = (Display) npc.getEntity();
         if (billboard != null) {
             display.setBillboard(billboard);
         }
@@ -104,10 +73,7 @@ public class DisplayTrait extends Trait implements Cloneable {
         }
         Transformation tf = display.getTransformation();
         if (scale != null) {
-            tf.getScale().set(scale);
-        }
-        if (offset != null) {
-            tf.getTranslation().set(offset);
+            tf.getScale().set(scale.getX(), scale.getY(), scale.getZ());
         }
         if (leftRotation != null) {
             tf.getLeftRotation().set(leftRotation);
@@ -118,12 +84,6 @@ public class DisplayTrait extends Trait implements Cloneable {
         display.setTransformation(tf);
         if (viewRange != null) {
             display.setViewRange(viewRange);
-        }
-        if (shadowRadius != null) {
-            display.setShadowRadius(shadowRadius);
-        }
-        if (shadowStrength != null) {
-            display.setShadowStrength(shadowStrength);
         }
     }
 
@@ -148,20 +108,8 @@ public class DisplayTrait extends Trait implements Cloneable {
         this.interpolationDuration = interpolationDuration;
     }
 
-    public void setOffset(Vector3f offset) {
-        this.offset = offset;
-    }
-
-    public void setScale(Vector3f scale) {
+    public void setScale(Vector scale) {
         this.scale = scale;
-    }
-
-    public void setShadowRadius(Float shadowRadius) {
-        this.shadowRadius = shadowRadius;
-    }
-
-    public void setShadowStrength(Float shadowStrength) {
-        this.shadowStrength = shadowStrength;
     }
 
     public void setViewRange(Float viewRange) {
@@ -174,7 +122,7 @@ public class DisplayTrait extends Trait implements Cloneable {
 
     @Command(
             aliases = { "npc" },
-            usage = "display --billboard [billboard] --brightness [blockLight,skyLight] --interpolationdelay [delay] --interpolationduration [duration] --height [height] --width [width] --scale [x,y,z] --viewrange [range] --leftrotation [x,y,z,w] --rightrotation [x,y,z,w] --offset [x,y,z]",
+            usage = "display --billboard [billboard] --brightness [blockLight,skyLight] --interpolationdelay [delay] --interpolationduration [duration] --height [height] --width [width] --scale [x,y,z] --viewrange [range] --leftrotation [x,y,z,w] --rightrotation [x,y,z,w]",
             desc = "",
             modifiers = { "display" },
             min = 1,
@@ -183,14 +131,13 @@ public class DisplayTrait extends Trait implements Cloneable {
     @Requirements(
             selected = true,
             ownership = true,
-            cosmeticTypes = { EntityType.ITEM_DISPLAY, EntityType.TEXT_DISPLAY, EntityType.BLOCK_DISPLAY })
+            types = { EntityType.ITEM_DISPLAY, EntityType.TEXT_DISPLAY, EntityType.BLOCK_DISPLAY })
     public static void display(CommandContext args, CommandSender sender, NPC npc,
-            @Flag("billboard") Billboard billboard, @Flag("left_rotation") Quaternionf leftrotation,
-            @Flag("right_rotation") Quaternionf rightrotation, @Flag("scale") Vector3f scale,
-            @Flag("offset") Vector3f offset, @Flag("view_range") Float viewRange, @Flag("brightness") String brightness,
-            @Flag("interpolation_delay") Integer interpolationDelay,
-            @Flag("interpolation_duration") Integer interpolationDuration, @Flag("height") Float height,
-            @Flag("shadow_radius") Float shadowRadius, @Flag("shadow_strength") Float shadowStrength,
+            @Flag("billboard") Billboard billboard, @Flag("leftrotation") Quaternionf leftrotation,
+            @Flag("rightrotation") Quaternionf rightrotation, @Flag("scale") Vector scale,
+            @Flag("viewrange") Float viewRange, @Flag("brightness") String brightness,
+            @Flag("interpolationdelay") Integer interpolationDelay,
+            @Flag("interpolationduration") Integer interpolationDuration, @Flag("height") Float height,
             @Flag("width") Float width) throws CommandException {
         DisplayTrait trait = npc.getOrAddTrait(DisplayTrait.class);
         String output = "";
@@ -201,20 +148,11 @@ public class DisplayTrait extends Trait implements Cloneable {
             trait.setBrightness(new Brightness(Integer.parseInt(brightness.split(",")[0]),
                     Integer.parseInt(brightness.split(",")[1])));
         }
-        if (offset != null) {
-            trait.setOffset(offset);
-        }
         if (interpolationDelay != null) {
             trait.setInterpolationDelay(interpolationDelay);
         }
         if (interpolationDuration != null) {
             trait.setInterpolationDuration(interpolationDuration);
-        }
-        if (shadowStrength != null) {
-            trait.setShadowStrength(shadowStrength);
-        }
-        if (shadowRadius != null) {
-            trait.setShadowRadius(shadowRadius);
         }
         if (width != null) {
             trait.setWidth(width);
@@ -228,11 +166,10 @@ public class DisplayTrait extends Trait implements Cloneable {
         if (scale != null) {
             trait.setScale(scale);
         }
-        if (npc.isSpawned()) {
-            trait.onSpawn();
-        }
+        trait.onSpawn();
         if (!output.isEmpty()) {
             Messaging.send(sender, output.trim());
-        }
+        } else
+            throw new CommandUsageException();
     }
 }

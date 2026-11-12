@@ -43,9 +43,9 @@ public class WitherTrait extends Trait {
 
     @Override
     public void run() {
-        if (!(npc.getCosmeticEntity() instanceof Wither))
+        if (!(npc.getEntity() instanceof Wither))
             return;
-        Wither wither = (Wither) npc.getCosmeticEntity();
+        Wither wither = (Wither) npc.getEntity();
         if (invulnerable != null) {
             NMS.setWitherInvulnerableTicks(wither, invulnerable ? 20 : 0);
         } else if (invulnerableTicks != null) {

@@ -1,17 +1,14 @@
 package net.citizensnpcs.commands;
 
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
-import java.util.stream.Collectors;
 
 import org.bukkit.Bukkit;
 import org.bukkit.command.CommandSender;
 
 import com.google.common.base.Joiner;
 import com.google.common.base.Splitter;
+import com.google.common.collect.Lists;
 
-import net.citizensnpcs.Citizens;
 import net.citizensnpcs.api.CitizensAPI;
 import net.citizensnpcs.api.command.Command;
 import net.citizensnpcs.api.command.CommandContext;
@@ -27,12 +24,6 @@ import net.citizensnpcs.util.StringHelper;
 
 @Requirements(selected = true, ownership = true)
 public class TraitCommands {
-    private final Citizens plugin;
-
-    public TraitCommands(Citizens plugin) {
-        this.plugin = plugin;
-    }
-
     @Command(
             aliases = { "trait" },
             usage = "add [trait name]...",
@@ -41,8 +32,8 @@ public class TraitCommands {
             min = 2,
             permission = "citizens.npc.trait")
     public void add(CommandContext args, CommandSender sender, NPC npc) throws CommandException {
-        List<String> added = new ArrayList<>();
-        List<String> failed = new ArrayList<>();
+        List<String> added = Lists.newArrayList();
+        List<String> failed = Lists.newArrayList();
         for (String traitName : Splitter.on(',').split(args.getJoinedStrings(1))) {
             if (!sender.hasPermission("citizens.npc.trait." + traitName)
                     && !sender.hasPermission("citizens.npc.trait.*")) {
@@ -76,28 +67,14 @@ public class TraitCommands {
 
     @Command(
             aliases = { "trait" },
-            usage = "clearsaves [trait name]",
-            desc = "",
-            modifiers = { "clearsaves" },
-            min = 2,
-            permission = "citizens.npc.trait.clearsaves")
-    public void clearsaves(CommandContext args, CommandSender sender, NPC npc) throws CommandException {
-        List<String> added = Splitter.on(',').splitToStream(args.getJoinedStrings(1))
-                .map(s -> s.toLowerCase(Locale.ROOT)).collect(Collectors.toList());
-        plugin.getDefaultNPCDataStore().clearTraitData(added);
-        Messaging.sendTr(sender, Messages.TRAIT_DATA_CLEARED, Joiner.on(", ").join(added));
-    }
-
-    @Command(
-            aliases = { "trait" },
             usage = "remove [trait names]...",
             desc = "",
             modifiers = { "remove", "rem", "r" },
             min = 2,
             permission = "citizens.npc.trait")
     public void remove(CommandContext args, CommandSender sender, NPC npc) throws CommandException {
-        List<String> removed = new ArrayList<>();
-        List<String> failed = new ArrayList<>();
+        List<String> removed = Lists.newArrayList();
+        List<String> failed = Lists.newArrayList();
         for (String traitName : Splitter.on(',').split(args.getJoinedStrings(1))) {
             if (!sender.hasPermission("citizens.npc.trait." + traitName)
                     && !sender.hasPermission("citizens.npc.trait.*")) {
@@ -138,9 +115,9 @@ public class TraitCommands {
             min = 1,
             permission = "citizens.npc.trait")
     public void toggle(CommandContext args, CommandSender sender, NPC npc) throws CommandException {
-        List<String> added = new ArrayList<>();
-        List<String> removed = new ArrayList<>();
-        List<String> failed = new ArrayList<>();
+        List<String> added = Lists.newArrayList();
+        List<String> removed = Lists.newArrayList();
+        List<String> failed = Lists.newArrayList();
         for (String traitName : Splitter.on(',').split(args.getJoinedStrings(0))) {
             if (!sender.hasPermission("citizens.npc.trait." + traitName)
                     && !sender.hasPermission("citizens.npc.trait.*")) {

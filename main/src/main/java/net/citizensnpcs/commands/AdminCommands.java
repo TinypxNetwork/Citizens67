@@ -32,7 +32,6 @@ public class AdminCommands {
         Messaging.send(sender, "     <yellow>-- <green>Author: fullwall");
         Messaging.send(sender, "     <yellow>-- <green><click:open_url:" + plugin.getDescription().getWebsite()
                 + "><hover:show_text:Citizens website including wiki><u>Website</hover></click> <click:open_url:https://discord.gg/Q6pZGSR><hover:show_text:Citizens Support Discord><u>Support</hover></click>");
-
     }
 
     @Command(
@@ -64,15 +63,16 @@ public class AdminCommands {
 
     @Command(
             aliases = { "citizens" },
-            usage = "save",
+            usage = "save (-a)",
             desc = "",
             modifiers = { "save" },
             min = 1,
             max = 1,
+            flags = "a",
             permission = "citizens.admin")
     public void save(CommandContext args, CommandSender sender, NPC npc) {
         Messaging.sendTr(sender, Messages.CITIZENS_SAVING);
-        plugin.storeNPCs();
+        plugin.storeNPCs(args.hasFlag('a'));
         Messaging.sendTr(sender, Messages.CITIZENS_SAVED);
     }
 }

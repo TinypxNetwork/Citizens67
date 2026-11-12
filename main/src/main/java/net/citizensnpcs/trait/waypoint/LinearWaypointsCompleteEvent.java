@@ -1,16 +1,16 @@
 package net.citizensnpcs.trait.waypoint;
 
-import java.util.ListIterator;
+import java.util.Iterator;
 
 import org.bukkit.event.HandlerList;
 
 import net.citizensnpcs.api.event.CitizensEvent;
 
 public class LinearWaypointsCompleteEvent extends CitizensEvent {
-    private ListIterator<Waypoint> next;
+    private Iterator<Waypoint> next;
     private final WaypointProvider provider;
 
-    public LinearWaypointsCompleteEvent(WaypointProvider provider, ListIterator<Waypoint> next) {
+    public LinearWaypointsCompleteEvent(WaypointProvider provider, Iterator<Waypoint> next) {
         this.next = next;
         this.provider = provider;
     }
@@ -20,7 +20,7 @@ public class LinearWaypointsCompleteEvent extends CitizensEvent {
         return handlers;
     }
 
-    public ListIterator<Waypoint> getNextWaypoints() {
+    public Iterator<Waypoint> getNextWaypoints() {
         return next;
     }
 
@@ -28,7 +28,7 @@ public class LinearWaypointsCompleteEvent extends CitizensEvent {
         return provider;
     }
 
-    public void setNextWaypoints(ListIterator<Waypoint> waypoints) {
+    public void setNextWaypoints(Iterator<Waypoint> waypoints) {
         next = waypoints;
     }
 

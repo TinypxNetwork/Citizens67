@@ -8,8 +8,8 @@ import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.inventory.ItemStack;
 
 import net.citizensnpcs.api.gui.CitizensInventoryClickEvent;
-import net.citizensnpcs.api.gui.InjectContext;
-import net.citizensnpcs.api.gui.InventoryMenuPage;
+import net.citizensnpcs.api.gui.ClickHandler;
+import net.citizensnpcs.api.gui.InventoryMenuSlot;
 import net.citizensnpcs.api.gui.Menu;
 import net.citizensnpcs.api.gui.MenuContext;
 import net.citizensnpcs.api.gui.MenuPattern;
@@ -17,93 +17,89 @@ import net.citizensnpcs.api.gui.MenuSlot;
 import net.citizensnpcs.api.npc.NPC;
 import net.citizensnpcs.api.trait.trait.Equipment;
 import net.citizensnpcs.api.trait.trait.Equipment.EquipmentSlot;
-import net.citizensnpcs.util.Util;
 
-@Menu(title = "NPC Equipment", type = InventoryType.CHEST, dimensions = { 3, 9 })
-@MenuSlot(slot = { 0, 0 }, material = Material.DIAMOND_SWORD, lore = "Place in hand item below", amount = 1)
+@Menu(title = "NPC Equipment", type = InventoryType.CHEST, dimensions = { 2, 5 })
 @MenuSlot(
         slot = { 0, 1 },
         compatMaterial = { "SHIELD", "BARRIER", "FIRE" },
         lore = "Place offhand item below",
         amount = 1)
+@MenuSlot(slot = { 0, 0 }, material = Material.DIAMOND_SWORD, lore = "Place in hand item below", amount = 1)
 @MenuSlot(slot = { 0, 2 }, material = Material.DIAMOND_HELMET, lore = "Place helmet below", amount = 1)
 @MenuSlot(slot = { 0, 3 }, material = Material.DIAMOND_CHESTPLATE, lore = "Place chestplate below", amount = 1)
 @MenuSlot(slot = { 0, 4 }, material = Material.DIAMOND_LEGGINGS, lore = "Place leggings below", amount = 1)
 @MenuSlot(slot = { 0, 5 }, material = Material.DIAMOND_BOOTS, lore = "Place boots below", amount = 1)
-@MenuSlot(slot = { 0, 6 }, material = Material.ELYTRA, lore = "Place body item below", amount = 1)
-@MenuSlot(slot = { 0, 7 }, material = Material.SADDLE, lore = "Place saddle item below", amount = 1)
 @MenuPattern(
-        offset = { 0, 8 },
+        offset = { 0, 6 },
         slots = { @MenuSlot(pat = 'x', compatMaterial = { "BARRIER", "FIRE" }, title = "<4>Unused") },
-        value = "x\nx\nx")
-public class GenericEquipperGUI extends InventoryMenuPage {
-    @InjectContext
-    private NPC npc;
+        value = "xxx\nxxx")
+public class GenericEquipperGUI extends EquipmentMenuPage {
+    @MenuSlot(slot = { 1, 5 })
+    private InventoryMenuSlot boots;
+    @MenuSlot(slot = { 1, 3 })
+    private InventoryMenuSlot chest;
+    @MenuSlot(slot = { 1, 0 })
+    private InventoryMenuSlot hand;
+    @MenuSlot(slot = { 1, 2 })
+    private InventoryMenuSlot helmet;
+    @MenuSlot(slot = { 1, 4 })
+    private InventoryMenuSlot leggings;
+    @MenuSlot(slot = { 1, 1 })
+    private InventoryMenuSlot offhand;
+
+    public GenericEquipperGUI(NPC npc) {
+        super(npc);
+    }
 
     @Override
     public void initialise(MenuContext ctx) {
+        super.initialise(ctx);
         Equipment trait = npc.getOrAddTrait(Equipment.class);
-        EquipmentSlot[] slots = new EquipmentSlot[] { EquipmentSlot.HAND, EquipmentSlot.OFF_HAND, EquipmentSlot.HELMET,
-                EquipmentSlot.CHESTPLATE, EquipmentSlot.LEGGINGS, EquipmentSlot.BOOTS, EquipmentSlot.BODY,
-                EquipmentSlot.SADDLE };
-        for (int i = 0; i < slots.length; i++) {
-            EquipmentSlot slot = slots[i];
-            ctx.getSlot(1 * 9 + i).setItemStack(trait.get(slot));
-            if (trait.getCosmetic(slot) != null) {
-                ctx.getSlot(2 * 9 + i).setItemStack(trait.getCosmetic(slot));
-            } else {
-                ctx.getSlot(2 * 9 + i).setItemStack(Util.createItem(Util.getFallbackMaterial("BARRIER", "FIRE"),
-                        "No cosmetic", "Click to enable cosmetic for this equipment"));
-            }
-            Function<ItemStack, Boolean> filter = type -> true;
-            switch (slot) {
-                case BOOTS:
-                case LEGGINGS:
-                    filter = stack -> Util.isEquippable(stack, slot) || stack.getType().name().endsWith(slot.name());
-                    break;
-                case CHESTPLATE:
-                    filter = stack -> Util.isEquippable(stack, slot) || stack.getType() == Material.ELYTRA
-                            || stack.getType().name().endsWith(slot.name());
-                default:
-                    break;
-            }
-            Function<ItemStack, Boolean> ffilter = filter;
-            ctx.getSlot(1 * 9 + i).addClickHandler(event -> set(slot, event, ffilter));
-            ctx.getSlot(2 * 9 + i).addClickHandler(event -> setCosmetic(slot, event, ffilter));
-        }
+        hand.setItemStack(trait.get(EquipmentSlot.HAND));
+        helmet.setItemStack(trait.get(EquipmentSlot.HELMET));
+        chest.setItemStack(trait.get(EquipmentSlot.CHESTPLATE));
+        leggings.setItemStack(trait.get(EquipmentSlot.LEGGINGS));
+        boots.setItemStack(trait.get(EquipmentSlot.BOOTS));
+        offhand.setItemStack(trait.get(EquipmentSlot.OFF_HAND));
     }
 
-    private void set(EquipmentSlot slot, CitizensInventoryClickEvent event, Function<ItemStack, Boolean> filter) {
+    private void set(EquipmentSlot slot, CitizensInventoryClickEvent event, Function<Material, Boolean> filter) {
         ItemStack result = event.getResultItemNonNull();
-        if (event.isCancelled() || (result.getType() != Material.AIR && !filter.apply(result))) {
+        if (event.isCancelled() || !filter.apply(result.getType())) {
             event.setResult(Result.DENY);
             return;
         }
         npc.getOrAddTrait(Equipment.class).set(slot, result);
     }
 
-    private void setCosmetic(EquipmentSlot slot, CitizensInventoryClickEvent event,
-            Function<ItemStack, Boolean> filter) {
-        if (event.getCursorNonNull().getType() == Material.AIR) {
-            if (event.getCurrentItemNonNull().getType() == Util.getFallbackMaterial("BARRIER", "FIRE")) {
-                event.setCurrentItem(null);
-                npc.getOrAddTrait(Equipment.class).setCosmetic(slot, new ItemStack(Material.AIR, 1));
-            } else if (event.getCurrentItem() == null) {
-                event.setCurrentItem(Util.createItem(Util.getFallbackMaterial("BARRIER", "FIRE"), "No cosmetic",
-                        "Click to enable cosmetic for this equipment"));
-                npc.getOrAddTrait(Equipment.class).setCosmetic(slot, null);
-            } else if (event.getCurrentItem() != null) {
-                npc.getOrAddTrait(Equipment.class).setCosmetic(slot, new ItemStack(Material.AIR, 1));
-                return;
-            }
-            event.setResult(Result.DENY);
-            return;
-        }
-        ItemStack result = event.getResultItemNonNull();
-        if (event.isCancelled() || (result.getType() != Material.AIR && !filter.apply(result))) {
-            event.setResult(Result.DENY);
-            return;
-        }
-        npc.getOrAddTrait(Equipment.class).setCosmetic(slot, result);
+    @ClickHandler(slot = { 1, 5 })
+    public void setBoots(InventoryMenuSlot slot, CitizensInventoryClickEvent event) {
+        set(EquipmentSlot.BOOTS, event, type -> type == Material.AIR || type.name().endsWith("BOOTS"));
+    }
+
+    @ClickHandler(slot = { 1, 3 })
+    public void setChest(InventoryMenuSlot slot, CitizensInventoryClickEvent event) {
+        set(EquipmentSlot.CHESTPLATE, event,
+                type -> type == Material.AIR || type.name().endsWith("CHESTPLATE") || type.name().equals("ELYTRA"));
+    }
+
+    @ClickHandler(slot = { 1, 0 })
+    public void setHand(InventoryMenuSlot slot, CitizensInventoryClickEvent event) {
+        set(EquipmentSlot.HAND, event, type -> true);
+    }
+
+    @ClickHandler(slot = { 1, 2 })
+    public void setHelmet(InventoryMenuSlot slot, CitizensInventoryClickEvent event) {
+        set(EquipmentSlot.HELMET, event, type -> true);
+    }
+
+    @ClickHandler(slot = { 1, 4 })
+    public void setLeggings(InventoryMenuSlot slot, CitizensInventoryClickEvent event) {
+        set(EquipmentSlot.LEGGINGS, event, type -> type == Material.AIR || type.name().endsWith("LEGGINGS"));
+    }
+
+    @ClickHandler(slot = { 1, 1 })
+    public void setOffhand(InventoryMenuSlot slot, CitizensInventoryClickEvent event) {
+        set(EquipmentSlot.OFF_HAND, event, type -> true);
     }
 }

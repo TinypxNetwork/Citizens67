@@ -1,26 +1,16 @@
 package net.citizensnpcs.trait;
 
-import java.lang.invoke.MethodHandle;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Material;
-import org.bukkit.NamespacedKey;
-import org.bukkit.command.CommandSender;
-import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.entity.HumanEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.Event;
@@ -29,30 +19,24 @@ import org.bukkit.event.HandlerList;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
-import org.bukkit.event.inventory.InventoryEvent;
 import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.event.inventory.InventoryType.SlotType;
 import org.bukkit.event.inventory.TradeSelectEvent;
 import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.InventoryView;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.Merchant;
 import org.bukkit.inventory.MerchantRecipe;
 import org.bukkit.inventory.meta.ItemMeta;
 
 import com.google.common.base.Joiner;
-import com.google.common.collect.ImmutableList;
+import com.google.common.base.Splitter;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
-import com.google.common.primitives.Doubles;
-import com.google.common.primitives.Ints;
+import com.google.common.collect.Maps;
 
 import net.citizensnpcs.Settings.Setting;
 import net.citizensnpcs.api.CitizensAPI;
-import net.citizensnpcs.api.command.CommandMessages;
-import net.citizensnpcs.api.event.NPCRightClickEvent;
-import net.citizensnpcs.api.expr.CompiledExpression;
-import net.citizensnpcs.api.expr.ExpressionEngine.ExpressionCompileException;
-import net.citizensnpcs.api.expr.ExpressionScope;
 import net.citizensnpcs.api.gui.CitizensInventoryClickEvent;
 import net.citizensnpcs.api.gui.ClickHandler;
 import net.citizensnpcs.api.gui.InputMenus;
@@ -67,16 +51,15 @@ import net.citizensnpcs.api.gui.MenuPattern;
 import net.citizensnpcs.api.gui.MenuSlot;
 import net.citizensnpcs.api.npc.NPC;
 import net.citizensnpcs.api.persistence.Persist;
+import net.citizensnpcs.api.persistence.Persistable;
 import net.citizensnpcs.api.trait.Trait;
-import net.citizensnpcs.api.trait.TraitEventHandler;
 import net.citizensnpcs.api.trait.TraitName;
 import net.citizensnpcs.api.trait.trait.Owner;
+import net.citizensnpcs.api.util.DataKey;
 import net.citizensnpcs.api.util.Messaging;
 import net.citizensnpcs.api.util.Placeholders;
 import net.citizensnpcs.trait.shop.CommandAction;
 import net.citizensnpcs.trait.shop.CommandAction.CommandActionGUI;
-import net.citizensnpcs.trait.shop.ConditionAction;
-import net.citizensnpcs.trait.shop.ConditionAction.ConditionActionGUI;
 import net.citizensnpcs.trait.shop.ExperienceAction;
 import net.citizensnpcs.trait.shop.ExperienceAction.ExperienceActionGUI;
 import net.citizensnpcs.trait.shop.ItemAction;
@@ -86,16 +69,11 @@ import net.citizensnpcs.trait.shop.MoneyAction.MoneyActionGUI;
 import net.citizensnpcs.trait.shop.NPCShopAction;
 import net.citizensnpcs.trait.shop.NPCShopAction.GUI;
 import net.citizensnpcs.trait.shop.NPCShopAction.Transaction;
-import net.citizensnpcs.trait.shop.OpenShopAction;
-import net.citizensnpcs.trait.shop.OpenShopAction.OpenShopActionGUI;
 import net.citizensnpcs.trait.shop.PermissionAction;
 import net.citizensnpcs.trait.shop.PermissionAction.PermissionActionGUI;
 import net.citizensnpcs.trait.shop.StoredShops;
 import net.citizensnpcs.util.InventoryMultiplexer;
-import net.citizensnpcs.util.NMS;
 import net.citizensnpcs.util.Util;
-import net.milkbowl.vault.economy.Economy;
-import net.milkbowl.vault.economy.EconomyResponse;
 
 /**
  * Shop trait for NPC GUI shops.
@@ -105,8 +83,6 @@ public class ShopTrait extends Trait {
     @Persist
     private String rightClickShop;
     private StoredShops shops;
-    @Persist(reify = true)
-    private final NPCShopStorage storage = new NPCShopStorage();
 
     public ShopTrait() {
         super("shop");
@@ -130,19 +106,16 @@ public class ShopTrait extends Trait {
         shops.deleteShop(getDefaultShop());
     }
 
-    @TraitEventHandler
-    public void onRightClick(NPCRightClickEvent event) {
+    public void onRightClick(Player player) {
         if (rightClickShop == null || rightClickShop.isEmpty())
             return;
-        Player player = event.getClicker();
-        event.setDelayedCancellation(true);
 
         String globalViewPermission = Setting.SHOP_GLOBAL_VIEW_PERMISSION.asString();
         if (!globalViewPermission.isEmpty() && !player.hasPermission(globalViewPermission))
             return;
 
         NPCShop shop = shops.globalShops.getOrDefault(rightClickShop, getDefaultShop());
-        shop.display(storage, player);
+        shop.display(player);
     }
 
     public void setDefaultShop(NPCShop shop) {
@@ -153,9 +126,7 @@ public class ShopTrait extends Trait {
         @Persist(value = "")
         private String name;
         @Persist(reify = true)
-        private final List<NPCShopPage> pages = new ArrayList<>();
-        @Persist(reify = true)
-        NPCShopStorage storage = new NPCShopStorage();
+        private final List<NPCShopPage> pages = Lists.newArrayList();
         @Persist
         private String title;
         @Persist
@@ -170,21 +141,16 @@ public class ShopTrait extends Trait {
             this.name = name;
         }
 
-        public boolean canEdit(NPC npc, CommandSender sender) {
+        public boolean canEdit(NPC npc, Player sender) {
             return sender.hasPermission("citizens.admin") || sender.hasPermission("citizens.npc.shop.edit")
                     || sender.hasPermission("citizens.npc.shop.edit." + getName())
-                    || (npc != null && npc.getOrAddTrait(Owner.class).isOwnedBy(sender));
+                    || npc.getOrAddTrait(Owner.class).isOwnedBy(sender);
         }
 
-        public boolean canView(Player sender) {
-            if (viewPermission != null && !sender.hasPermission(viewPermission))
-                return false;
-            return Setting.SHOP_GLOBAL_VIEW_PERMISSION.asString().isEmpty()
-                    || sender.hasPermission(Setting.SHOP_GLOBAL_VIEW_PERMISSION.asString());
-        }
-
-        public void display(NPCShopStorage storage, Player sender) {
-            if (!canView(sender))
+        public void display(Player sender) {
+            if (viewPermission != null && !sender.hasPermission(viewPermission)
+                    || !Setting.SHOP_GLOBAL_VIEW_PERMISSION.asString().isEmpty()
+                            && !sender.hasPermission(Setting.SHOP_GLOBAL_VIEW_PERMISSION.asString()))
                 return;
 
             if (pages.size() == 0) {
@@ -192,14 +158,10 @@ public class ShopTrait extends Trait {
                 return;
             }
             if (type == ShopType.TRADER) {
-                CitizensAPI.registerEvents(new NPCTraderShopViewer(this, storage, sender));
+                CitizensAPI.registerEvents(new NPCTraderShopViewer(this, sender));
             } else {
-                InventoryMenu.createSelfRegistered(new NPCShopViewer(this, storage, sender)).present(sender);
+                InventoryMenu.createSelfRegistered(new NPCShopViewer(this, sender)).present(sender);
             }
-        }
-
-        public void display(Player sender) {
-            display(storage, sender);
         }
 
         public void displayEditor(ShopTrait trait, Player sender) {
@@ -210,26 +172,11 @@ public class ShopTrait extends Trait {
             return name == null ? "" : name;
         }
 
-        public Optional<NPC> getNPC() {
-            if (name.contains("-")) {
-                try {
-                    UUID uuid = UUID.fromString(name);
-                    return Optional.ofNullable(CitizensAPI.getNPCRegistry().getByUniqueIdGlobal(uuid));
-                } catch (IllegalArgumentException e) {
-                }
-            }
-            return Optional.empty();
-        }
-
         public NPCShopPage getOrCreatePage(int page) {
             while (pages.size() <= page) {
                 pages.add(new NPCShopPage(page));
             }
             return pages.get(page);
-        }
-
-        public List<NPCShopPage> getPages() {
-            return pages;
         }
 
         public String getRequiredPermission() {
@@ -299,11 +246,7 @@ public class ShopTrait extends Trait {
                     if (display != null && evt.isShiftClick() && evt.getCursorNonNull().getType() == Material.AIR
                             && display.display != null) {
                         copying = display.clone();
-                        if (!evt.isRightClick()) {
-                            shopPage.setItem(idx, null);
-                            slot.setItemStack(null);
-                        }
-                        evt.getView().setCursor(display.getDisplayItem(null));
+                        evt.setCursor(display.getDisplayItem(null));
                         evt.setCancelled(true);
                         return;
                     }
@@ -311,13 +254,12 @@ public class ShopTrait extends Trait {
                         if (copying != null && evt.getCursorNonNull().getType() != Material.AIR
                                 && evt.getCursorNonNull().equals(copying.getDisplayItem(null))) {
                             shopPage.setItem(idx, copying);
-                            slot.setItemStack(copying.getDisplayItem(null));
                             copying = null;
                             return;
                         }
                         display = new NPCShopItem();
                         if (evt.getCursor() != null) {
-                            display.setDisplayItem(evt.getCursor());
+                            display.display = evt.getCursor().clone();
                         }
                     }
                     ctx.clearSlots();
@@ -386,65 +328,30 @@ public class ShopTrait extends Trait {
         }
     }
 
-    public static class NPCShopItem implements Cloneable {
+    public static class NPCShopItem implements Cloneable, Persistable {
         @Persist
         private String alreadyPurchasedMessage;
         @Persist
         private String clickToConfirmMessage;
         @Persist
-        private List<NPCShopAction> cost = new ArrayList<>();
+        private final List<NPCShopAction> cost = Lists.newArrayList();
         @Persist
         private String costMessage;
-        private List<String> defaultLore = ImmutableList.of();
-        private String defaultName;
         @Persist
         private ItemStack display;
         @Persist
-        private int globalTimesPurchasable;
-        @Persist
-        private String isClickableExpression;
-        @Persist
-        private String isVisibleExpression;
-        @Persist
         private boolean maxRepeatsOnShiftClick;
-        @Persist
-        private int npurchases;
         @Persist(keyType = UUID.class)
-        private final Map<UUID, Integer> purchases = new HashMap<>();
+        private final Map<UUID, Integer> purchases = Maps.newHashMap();
         @Persist
-        private List<NPCShopAction> result = new ArrayList<>();
+        private final List<NPCShopAction> result = Lists.newArrayList();
         @Persist
         private String resultMessage;
         @Persist
-        private int timesPurchasable;
+        private int timesPurchasable = 0;
 
-        public NPCShopItem() {
-            ConfigurationSection defaultSettings = Setting.SHOP_DEFAULT_ITEM_SETTINGS.asSection();
-            alreadyPurchasedMessage = !defaultSettings.getString("already-purchased-message", "").isEmpty()
-                    ? Messaging.parseComponents(defaultSettings.getString("already-purchased-message"))
-                    : null;
-            clickToConfirmMessage = !defaultSettings.getString("click-to-confirm-message", "").isEmpty()
-                    ? Messaging.parseComponents(defaultSettings.getString("click-to-confirm-message", ""))
-                    : null;
-            costMessage = !defaultSettings.getString("cost-message", "").isEmpty()
-                    ? Messaging.parseComponents(defaultSettings.getString("cost-message"))
-                    : null;
-            resultMessage = !defaultSettings.getString("result-message", "").isEmpty()
-                    ? Messaging.parseComponents(defaultSettings.getString("result-message"))
-                    : null;
-            maxRepeatsOnShiftClick = defaultSettings.getBoolean("max-repeats-on-shift-click", false);
-            timesPurchasable = defaultSettings.getInt("times-purchasable", 0);
-            globalTimesPurchasable = defaultSettings.getInt("global-times-purchasable", 0);
-            if (!defaultSettings.getString("lore", "").isEmpty()) {
-                defaultLore = Messaging.parseComponentsList(defaultSettings.getString("lore"));
-            }
-            if (!defaultSettings.getString("name", "").isEmpty()) {
-                defaultName = Messaging.parseComponents(defaultSettings.getString(""));
-            }
-        }
-
-        private List<Transaction> apply(List<NPCShopAction> actions, Function<NPCShopAction, Transaction> func) {
-            List<Transaction> pending = new ArrayList<>();
+        public List<Transaction> apply(List<NPCShopAction> actions, Function<NPCShopAction, Transaction> func) {
+            List<Transaction> pending = Lists.newArrayList();
             for (NPCShopAction action : actions) {
                 Transaction take = func.apply(action);
                 if (!take.isPossible()) {
@@ -475,60 +382,33 @@ public class ShopTrait extends Trait {
             }
         }
 
-        private void changeCost(Function<NPCShopAction, Boolean> filter, NPCShopAction cost) {
+        public void changeCost(Function<NPCShopAction, Boolean> filter, NPCShopAction cost) {
             changeAction(this.cost, filter, cost);
         }
 
-        private void changeResult(Function<NPCShopAction, Boolean> filter, NPCShopAction result) {
+        public void changeResult(Function<NPCShopAction, Boolean> filter, NPCShopAction result) {
             changeAction(this.result, filter, result);
         }
 
         @Override
         public NPCShopItem clone() {
             try {
-                NPCShopItem dup = (NPCShopItem) super.clone();
-                dup.cost = new ArrayList<>();
-                for (NPCShopAction src : cost) {
-                    dup.cost.add(src.clone());
-                }
-                dup.result = new ArrayList<>();
-                for (NPCShopAction src : result) {
-                    dup.result.add(src.clone());
-                }
-                return dup;
+                return (NPCShopItem) super.clone();
             } catch (CloneNotSupportedException e) {
                 throw new Error(e);
             }
         }
 
-        public List<NPCShopAction> getCost() {
-            return cost;
-        }
-
         public ItemStack getDisplayItem(Player player) {
             if (display == null)
                 return null;
-            if (isVisibleExpression != null) {
-                try {
-                    CompiledExpression expr = CitizensAPI.getExpressionRegistry().compile(isVisibleExpression);
-                    ExpressionScope scope = ExpressionScope.create(player);
-                    if (!expr.evaluateAsBoolean(scope))
-                        return null;
-                } catch (ExpressionCompileException e) {
-                    e.printStackTrace();
-                }
-            }
             ItemStack stack = display.clone();
             ItemMeta meta = stack.getItemMeta();
             if (meta.hasDisplayName()) {
-                String name = meta.getDisplayName();
-                String replaced = placeholders(name, player);
-                if (!replaced.equals(name)) {
-                    meta.setDisplayName(replaced);
-                }
+                meta.setDisplayName(placeholders(meta.getDisplayName(), player));
             }
-            if (Setting.SHOP_USE_DEFAULT_DESCRIPTION.asBoolean() && !meta.hasLore()) {
-                List<String> lore = new ArrayList<>();
+            if (!meta.hasLore()) {
+                List<String> lore = Lists.newArrayList();
                 cost.forEach(c -> lore.add(c.describe()));
                 result.forEach(r -> {
                     if (!(r instanceof CommandAction)) {
@@ -542,38 +422,29 @@ public class ShopTrait extends Trait {
                 meta.setLore(lore);
             }
             if (meta.hasLore()) {
-                List<String> lore = meta.getLore();
-                List<String> replaced = Lists.transform(lore, line -> placeholders(line, player));
-                if (!replaced.equals(lore)) {
-                    meta.setLore(replaced);
-                }
+                meta.setLore(Lists.transform(meta.getLore(), line -> placeholders(line, player)));
             }
             stack.setItemMeta(meta);
             return stack;
         }
 
-        public List<NPCShopAction> getResult() {
-            return result;
+        @Override
+        public void load(DataKey key) {
+            if (key.keyExists("message")) {
+                resultMessage = key.getString("message");
+                key.removeKey("message");
+            }
+            if (key.keyExists("clickMessage")) {
+                resultMessage = key.getString("clickMessage");
+                key.removeKey("clickMessage");
+            }
         }
 
-        private void onClick(NPCShop shop, NPCShopStorage storage, Player player, InventoryMultiplexer inventory,
-                boolean shiftClick, boolean secondClick) {
-            if (isClickableExpression != null) {
-                try {
-                    CompiledExpression expr = CitizensAPI.getExpressionRegistry().compile(isClickableExpression);
-                    ExpressionScope scope = ExpressionScope.create(player);
-                    if (!expr.evaluateAsBoolean(scope))
-                        return;
-                } catch (ExpressionCompileException e) {
-                    e.printStackTrace();
-                }
-            }
+        public void onClick(NPCShop shop, Player player, InventoryMultiplexer inventory, boolean shiftClick,
+                boolean secondClick) {
             // TODO: InventoryMultiplexer could be lifted up to transact in apply(), which would be cleaner.
             // if this is done, it should probably refresh after every transaction application
-            if (globalTimesPurchasable > 0 && npurchases >= globalTimesPurchasable)
-                return;
-
-            if (timesPurchasable > 0 && purchases.getOrDefault(player.getUniqueId(), 0) >= timesPurchasable) {
+            if (timesPurchasable > 0 && purchases.getOrDefault(player.getUniqueId(), 0) == timesPurchasable) {
                 if (alreadyPurchasedMessage != null) {
                     Messaging.sendColorless(player, placeholders(alreadyPurchasedMessage, player));
                 }
@@ -595,14 +466,14 @@ public class ShopTrait extends Trait {
                     return;
             }
             int repeats = max == Integer.MAX_VALUE ? 1 : max;
-            List<Transaction> take = apply(cost, action -> action.take(storage, player, inventory, repeats));
+            List<Transaction> take = apply(cost, action -> action.take(player, inventory, repeats));
             if (take == null) {
                 if (costMessage != null) {
                     Messaging.sendColorless(player, placeholders(costMessage, player));
                 }
                 return;
             }
-            if (apply(result, action -> action.grant(storage, player, inventory, repeats)) == null) {
+            if (apply(result, action -> action.grant(player, inventory, repeats)) == null) {
                 take.forEach(Transaction::rollback);
                 return;
             }
@@ -611,9 +482,6 @@ public class ShopTrait extends Trait {
             }
             if (timesPurchasable > 0) {
                 purchases.put(player.getUniqueId(), purchases.getOrDefault(player.getUniqueId(), 0) + 1);
-            }
-            if (globalTimesPurchasable > 0) {
-                npurchases++;
             }
             if (NPCShopPurchaseEvent.HANDLERS.getRegisteredListeners().length > 0) {
                 Bukkit.getPluginManager().callEvent(new NPCShopPurchaseEvent(player, shop, this));
@@ -625,59 +493,21 @@ public class ShopTrait extends Trait {
             StringBuffer sb = new StringBuffer();
             Matcher matcher = PLACEHOLDER_REGEX.matcher(string);
             while (matcher.find()) {
-                if (matcher.group(1).equalsIgnoreCase("times_purchasable")) {
-                    matcher.appendReplacement(sb, Integer.toString(timesPurchasable));
-                } else {
-                    if ((matcher.group(1).equalsIgnoreCase("cost") ? cost : result).isEmpty()) {
-                        matcher.appendReplacement(sb, "");
-                    } else {
-                        matcher.appendReplacement(sb,
-                                Joiner.on(", ")
-                                        .join(Iterables.transform(
-                                                matcher.group(1).equalsIgnoreCase("cost") ? cost : result,
-                                                NPCShopAction::describe))
-                                        .replace("$", "\\$").replace("{", "\\{"));
-                    }
-                }
+                matcher.appendReplacement(sb,
+                        Joiner.on(", ")
+                                .join(Iterables.transform(matcher.group(1).equalsIgnoreCase("cost") ? cost : result,
+                                        NPCShopAction::describe))
+                                .replace("$", "\\$").replace("{", "\\{"));
             }
             matcher.appendTail(sb);
             return sb.toString();
         }
 
-        public void resetPurchaseHistory() {
-            purchases.clear();
+        @Override
+        public void save(DataKey key) {
         }
 
-        public void resetPurchaseHistory(UUID playerUUID) {
-            purchases.remove(playerUUID);
-        }
-
-        public void setDisplayItem(ItemStack itemstack) {
-            this.display = itemstack == null ? null : itemstack.clone();
-            if (this.display == null)
-                return;
-            if (defaultName != null) {
-                ItemMeta meta = display.getItemMeta();
-                meta.setDisplayName(defaultName.replace("<itemname>", meta.getItemName()));
-                display.setItemMeta(meta);
-            }
-            if (!defaultLore.isEmpty()) {
-                List<String> output = new ArrayList<>();
-                ItemMeta meta = display.getItemMeta();
-                for (String lore : defaultLore) {
-                    if (lore.trim().equals("<itemlore>")) {
-                        output.addAll(meta.getLore());
-                    } else {
-                        output.add(lore);
-                    }
-                }
-                meta.setLore(output);
-                display.setItemMeta(meta);
-            }
-        }
-
-        private static final Pattern PLACEHOLDER_REGEX = Pattern.compile("<(cost|result|times_purchasable)>",
-                Pattern.CASE_INSENSITIVE);
+        private static final Pattern PLACEHOLDER_REGEX = Pattern.compile("<(cost|result)>", Pattern.CASE_INSENSITIVE);
     }
 
     @Menu(title = "NPC Shop Item Editor", type = InventoryType.CHEST, dimensions = { 6, 9 })
@@ -716,92 +546,58 @@ public class ShopTrait extends Trait {
             if (modified.display != null) {
                 ctx.getSlot(9 * 4 + 4).setItemStack(modified.getDisplayItem(null));
             }
-            ctx.getSlot(9 * 4 + 7).setItemStack(new ItemStack(Material.APPLE), "Reset purchase history",
-                    modified.purchases.size() + " purchases");
-            ctx.getSlot(9 * 4 + 7).setClickHandler(e -> {
-                modified.resetPurchaseHistory();
-                ctx.getSlot(9 * 4 + 7).setDescription(modified.purchases.size() + " purchases");
-            });
-
-            ctx.getSlot(9 * 3 + 6).setItemStack(new ItemStack(Material.EGG), "Number of purchases limit per player",
+            ctx.getSlot(9 * 3 + 2).setItemStack(new ItemStack(Material.EGG), "Only purchasable once per player",
                     "Times purchasable: " + modified.timesPurchasable
                             + (modified.timesPurchasable == 0 ? " (no limit)" : ""));
-            ctx.getSlot(9 * 3 + 6).setClickHandler(e -> ctx.getMenu()
+            ctx.getSlot(9 * 3 + 2).setClickHandler(e -> ctx.getMenu()
                     .transition(InputMenus.stringSetter(() -> String.valueOf(modified.timesPurchasable), s -> {
                         modified.timesPurchasable = Integer.parseInt(s);
                         ctx.getSlot(9 * 4 + 2).setDescription("Times purchasable: " + modified.timesPurchasable
                                 + (modified.timesPurchasable == 0 ? " (no limit)" : ""));
                     })));
-            ctx.getSlot(9 * 4 + 6).setItemStack(new ItemStack(Material.EGG), "Global number of purchases limit",
-                    "Times purchasable: " + modified.globalTimesPurchasable
-                            + (modified.globalTimesPurchasable == 0 ? " (no limit)" : ""));
-            ctx.getSlot(9 * 4 + 6).setClickHandler(e -> ctx.getMenu()
-                    .transition(InputMenus.stringSetter(() -> String.valueOf(modified.globalTimesPurchasable), s -> {
-                        modified.globalTimesPurchasable = Integer.parseInt(s);
-                        ctx.getSlot(9 * 4 + 2).setDescription("Times purchasable: " + modified.globalTimesPurchasable
-                                + (modified.globalTimesPurchasable == 0 ? " (no limit)" : ""));
-                    })));
 
             ctx.getSlot(9 * 4 + 2).setItemStack(new ItemStack(Util.getFallbackMaterial("OAK_SIGN", "SIGN")),
                     "Set already purchased message, currently:\n",
                     modified.alreadyPurchasedMessage == null ? "Unset" : modified.alreadyPurchasedMessage);
-            ctx.getSlot(9 * 4 + 2).setClickHandler(e -> InputMenus.runChatStringSetter(ctx.getMenu(), e,
-                    "Enter the new already purchased message, currently:<br>[[" + modified.alreadyPurchasedMessage,
-                    s -> {
+            ctx.getSlot(9 * 4 + 2).setClickHandler(
+                    e -> ctx.getMenu().transition(InputMenus.stringSetter(() -> modified.alreadyPurchasedMessage, s -> {
                         modified.alreadyPurchasedMessage = s;
                         ctx.getSlot(9 * 4 + 2).setDescription(modified.alreadyPurchasedMessage);
-                    }));
+                    })));
 
             ctx.getSlot(9 * 3 + 3).setItemStack(
                     new ItemStack(Util.getFallbackMaterial("GREEN_WOOL", "EMERALD", "OAK_SIGN", "SIGN")),
                     "Set successful click message, currently:\n",
                     modified.resultMessage == null ? "Unset" : modified.resultMessage);
-            ctx.getSlot(9 * 3 + 3).setClickHandler(e -> InputMenus.runChatStringSetter(ctx.getMenu(), e,
-                    "Enter the new successful click message, currently:<br>[[" + modified.resultMessage, s -> {
+            ctx.getSlot(9 * 3 + 3).setClickHandler(
+                    e -> ctx.getMenu().transition(InputMenus.stringSetter(() -> modified.resultMessage, s -> {
                         modified.resultMessage = s;
                         ctx.getSlot(9 * 3 + 3).setDescription(modified.resultMessage);
-                    }));
+                    })));
 
-            ctx.getSlot(9 * 3 + 2).setItemStack(new ItemStack(Util.getFallbackMaterial("RED_WOOL", "OAK_SIGN", "SIGN")),
+            ctx.getSlot(9 * 3 + 6).setItemStack(new ItemStack(Util.getFallbackMaterial("RED_WOOL", "OAK_SIGN", "SIGN")),
                     "Set unsuccessful click message, currently:\n",
                     modified.costMessage == null ? "Unset" : modified.costMessage);
-            ctx.getSlot(9 * 3 + 2).setClickHandler(e -> InputMenus.runChatStringSetter(ctx.getMenu(), e,
-                    "Enter the new unsuccessful click message, currently:<br>[[" + modified.costMessage, s -> {
+            ctx.getSlot(9 * 3 + 6).setClickHandler(
+                    e -> ctx.getMenu().transition(InputMenus.stringSetter(() -> modified.costMessage, s -> {
                         modified.costMessage = s;
                         ctx.getSlot(9 * 3 + 6).setDescription(modified.costMessage);
-                    }));
+                    })));
 
             ctx.getSlot(9 * 3 + 5).setItemStack(new ItemStack(Util.getFallbackMaterial("FEATHER", "OAK_SIGN", "SIGN")),
                     "Set click to confirm message.",
                     "For example, 'click again to buy this item'\nYou can use <cost> or <result> placeholders.\nCurrently:\n"
                             + (modified.clickToConfirmMessage == null ? "Unset" : modified.clickToConfirmMessage));
-            ctx.getSlot(9 * 3 + 5).setClickHandler(e -> InputMenus.runChatStringSetter(ctx.getMenu(), e,
-                    "Enter the new click to confirm message, currently:<br>[[" + modified.clickToConfirmMessage, s -> {
+            ctx.getSlot(9 * 3 + 5).setClickHandler(
+                    e -> ctx.getMenu().transition(InputMenus.stringSetter(() -> modified.clickToConfirmMessage, s -> {
                         modified.clickToConfirmMessage = s;
                         ctx.getSlot(9 * 3 + 5).setDescription(modified.clickToConfirmMessage);
-                    }));
+                    })));
 
             ctx.getSlot(9 * 3 + 4).setItemStack(new ItemStack(Material.REDSTONE),
                     "Sell as many times as possible on shift click\n", "Currently: " + modified.maxRepeatsOnShiftClick);
             ctx.getSlot(9 * 3 + 4).setClickHandler(
                     InputMenus.toggler(res -> modified.maxRepeatsOnShiftClick = res, modified.maxRepeatsOnShiftClick));
-
-            ctx.getSlot(9 * 3 + 2).setItemStack(new ItemStack(Material.BEACON), "Set visibility expression\n",
-                    "Currently: " + modified.isVisibleExpression);
-            ctx.getSlot(9 * 3 + 2).setClickHandler(e -> InputMenus.runChatStringSetter(ctx.getMenu(), e,
-                    "Enter the visibility expression, currently:<br>[[" + modified.isVisibleExpression, s -> {
-                        modified.isVisibleExpression = s;
-                        ctx.getSlot(9 * 3 + 2).setDescription(modified.isVisibleExpression);
-                    }));
-
-            ctx.getSlot(9 * 4 + 2).setItemStack(new ItemStack(Material.ANVIL), "Set clickable expression\n",
-                    "Currently: " + modified.isClickableExpression);
-            ctx.getSlot(9 * 4 + 2).setClickHandler(e -> InputMenus.runChatStringSetter(ctx.getMenu(), e,
-                    "Enter the clickable expression, currently:<br>[[" + modified.isClickableExpression, s -> {
-                        modified.isClickableExpression = s;
-                        ctx.getSlot(9 * 4 + 2).setDescription(modified.isClickableExpression);
-                    }));
-
             int pos = 0;
 
             for (GUI template : NPCShopAction.getGUIs()) {
@@ -811,30 +607,14 @@ public class ShopTrait extends Trait {
                 NPCShopAction oldCost = modified.cost.stream().filter(template::manages).findFirst().orElse(null);
                 costItems.getSlots().get(pos)
                         .setItemStack(editTitle(template.createMenuItem(oldCost), title -> title + " Cost"));
-                costItems.getSlots().get(pos).setClickHandler(event -> {
-                    if (!event.getWhoClicked().hasPermission("citizens.admin")
-                            && !template.canUse(event.getWhoClicked())) {
-                        event.setCancelled(true);
-                        Messaging.sendTr(event.getWhoClicked(), CommandMessages.NO_PERMISSION);
-                        return;
-                    }
-                    ctx.getMenu().transition(
-                            template.createEditor(oldCost, cost -> modified.changeCost(template::manages, cost)));
-                });
+                costItems.getSlots().get(pos).setClickHandler(event -> ctx.getMenu().transition(
+                        template.createEditor(oldCost, cost -> modified.changeCost(template::manages, cost))));
 
                 NPCShopAction oldResult = modified.result.stream().filter(template::manages).findFirst().orElse(null);
                 actionItems.getSlots().get(pos)
                         .setItemStack(editTitle(template.createMenuItem(oldResult), title -> title + " Result"));
-                actionItems.getSlots().get(pos).setClickHandler(event -> {
-                    if (!event.getWhoClicked().hasPermission("citizens.admin")
-                            && !template.canUse(event.getWhoClicked())) {
-                        event.setCancelled(true);
-                        Messaging.sendTr(event.getWhoClicked(), CommandMessages.NO_PERMISSION);
-                        return;
-                    }
-                    ctx.getMenu().transition(template.createEditor(oldResult,
-                            result -> modified.changeResult(template::manages, result)));
-                });
+                actionItems.getSlots().get(pos).setClickHandler(event -> ctx.getMenu().transition(
+                        template.createEditor(oldResult, result -> modified.changeResult(template::manages, result))));
 
                 pos++;
             }
@@ -859,19 +639,15 @@ public class ShopTrait extends Trait {
             if (modified.display == null)
                 return;
 
-            InputMenus.runChatStringSetter(ctx.getMenu(), event,
-                    "Type the new item description, currently:<br>[[" + (modified.display.getItemMeta().hasLore()
+            ctx.getMenu()
+                    .transition(InputMenus.stringSetter(() -> modified.display.getItemMeta().hasLore()
                             ? Joiner.on("<br>").skipNulls().join(modified.display.getItemMeta().getLore())
-                            : "Unset"),
-                    description -> {
-                        ItemMeta meta = modified.display.getItemMeta();
-                        if (description.isEmpty()) {
-                            meta.setLore(new ArrayList<>());
-                        } else {
-                            meta.setLore(Messaging.parseComponentsList(description));
-                        }
-                        modified.display.setItemMeta(meta);
-                    });
+                            : "", description -> {
+                                ItemMeta meta = modified.display.getItemMeta();
+                                meta.setLore(Lists
+                                        .newArrayList(Splitter.on('\n').split(Messaging.parseComponents(description))));
+                                modified.display.setItemMeta(meta);
+                            }));
         }
 
         @MenuSlot(slot = { 4, 3 }, material = Material.NAME_TAG, amount = 1, title = "<f>Set name")
@@ -892,10 +668,10 @@ public class ShopTrait extends Trait {
             event.setCancelled(true);
             if (event.getCursor() != null) {
                 event.setCurrentItem(event.getCursor());
-                modified.setDisplayItem(event.getCursor());
+                modified.display = event.getCursor().clone();
             } else {
                 event.setCurrentItem(null);
-                modified.setDisplayItem(null);
+                modified.display = null;
             }
         }
 
@@ -916,7 +692,7 @@ public class ShopTrait extends Trait {
         @Persist("$key")
         private int index;
         @Persist(keyType = Integer.class, reify = true)
-        private final Map<Integer, NPCShopItem> items = new HashMap<>();
+        private final Map<Integer, NPCShopItem> items = Maps.newHashMap();
         @Persist
         private String title;
 
@@ -929,10 +705,6 @@ public class ShopTrait extends Trait {
 
         public NPCShopItem getItem(int idx) {
             return items.get(idx);
-        }
-
-        public Collection<NPCShopItem> getItems() {
-            return items.values();
         }
 
         public ItemStack getNextPageItem(Player player, int idx) {
@@ -1008,24 +780,18 @@ public class ShopTrait extends Trait {
             return shop;
         }
 
-        public static HandlerList getHandlerList() {
-            return HANDLERS;
-        }
-
         private static final HandlerList HANDLERS = new HandlerList();
     }
 
-    @Menu(title = "NPC Shop Editor", type = InventoryType.CHEST, dimensions = { 2, 9 })
+    @Menu(title = "NPC Shop Editor", type = InventoryType.CHEST, dimensions = { 1, 9 })
     public static class NPCShopSettings extends InventoryMenuPage {
         private MenuContext ctx;
         private final NPCShop shop;
-        private final NPCShopStorage storage;
         private final ShopTrait trait;
 
         public NPCShopSettings(ShopTrait trait, NPCShop shop) {
             this.trait = trait;
             this.shop = shop;
-            this.storage = trait != null && trait.storage != null ? trait.storage : shop.storage;
         }
 
         @Override
@@ -1037,67 +803,7 @@ public class ShopTrait extends Trait {
             if (trait != null) {
                 ctx.getSlot(6).setDescription(
                         "<f>Show shop on right click<br>" + shop.getName().equals(trait.rightClickShop));
-                ctx.getSlot(8).setDescription("<f>Set shop type<br>" + shop.getShopType());
             }
-            boolean economySupported = false;
-            try {
-                if (Bukkit.getServicesManager().getRegistration(Economy.class).getProvider() != null) {
-                    economySupported = true;
-                }
-            } catch (Throwable t) {
-            }
-            if (economySupported) {
-                ctx.getSlot(1 * 9 + 3).setItemStack(new ItemStack(Material.EMERALD, 1));
-                ctx.getSlot(1 * 9 + 3).setDescription(
-                        "<f>Shop balance: " + storage.getBalance() + "<br>Click to deposit<br>Shift click to withdraw");
-            }
-        }
-
-        @MenuSlot(slot = { 1, 3 })
-        public void onEditBalance(InventoryMenuSlot slot, CitizensInventoryClickEvent event) {
-            try {
-                if (Bukkit.getServicesManager().getRegistration(Economy.class).getProvider() == null)
-                    return;
-            } catch (Throwable t) {
-                return;
-            }
-            new Object() {
-                {
-                    Economy economy = Bukkit.getServicesManager().getRegistration(Economy.class).getProvider();
-                    double balance = economy.getBalance((Player) event.getWhoClicked());
-                    if (event.isShiftClick()) {
-                        ctx.getMenu().transition(InputMenus.filteredStringSetter(
-                                "Withdraw amount (max: " + storage.getBalance() + ")", () -> "", s -> {
-                                    Double amount = Doubles.tryParse(s);
-                                    if (amount == null)
-                                        return false;
-                                    if (amount < 0 || amount > storage.getBalance())
-                                        return false;
-                                    EconomyResponse response = economy.depositPlayer((Player) event.getWhoClicked(),
-                                            amount);
-                                    if (!response.transactionSuccess())
-                                        return false;
-                                    storage.setBalance(storage.getBalance() - amount);
-                                    return true;
-                                }));
-                    } else {
-                        ctx.getMenu().transition(InputMenus
-                                .filteredStringSetter("Deposit amount (max: " + balance + ")", () -> "", s -> {
-                                    Double amount = Doubles.tryParse(s);
-                                    if (amount == null)
-                                        return false;
-                                    if (amount < 0)
-                                        return false;
-                                    EconomyResponse response = economy.withdrawPlayer((Player) event.getWhoClicked(),
-                                            amount);
-                                    if (!response.transactionSuccess())
-                                        return false;
-                                    storage.setBalance(storage.getBalance() + amount);
-                                    return true;
-                                }));
-                    }
-                }
-            };
         }
 
         @MenuSlot(slot = { 0, 2 }, material = Material.FEATHER, amount = 1, title = "<f>Edit shop items")
@@ -1112,12 +818,6 @@ public class ShopTrait extends Trait {
 
         @MenuSlot(slot = { 0, 8 }, material = Material.CHEST, amount = 1, title = "<f>Set shop type")
         public void onSetInventoryType(InventoryMenuSlot slot, CitizensInventoryClickEvent event) {
-            if (!event.getWhoClicked().hasPermission("citizens.admin")
-                    && !event.getWhoClicked().hasPermission("citizens.npc.shop.editor.set-shop-type")) {
-                event.setCancelled(true);
-                Messaging.sendTr(event.getWhoClicked(), CommandMessages.NO_PERMISSION);
-                return;
-            }
             ctx.getMenu().transition(InputMenus.picker("Set shop type",
                     (Choice<ShopType> choice) -> shop.setShopType(choice.getValue()),
                     Choice.of(ShopType.DEFAULT, Material.CHEST, "Default (5x9 chest)",
@@ -1140,12 +840,6 @@ public class ShopTrait extends Trait {
 
         @MenuSlot(slot = { 0, 6 }, compatMaterial = { "COMMAND_BLOCK", "COMMAND" }, amount = 1)
         public void onToggleRightClick(InventoryMenuSlot slot, CitizensInventoryClickEvent event) {
-            if (!event.getWhoClicked().hasPermission("citizens.admin")
-                    && !event.getWhoClicked().hasPermission("citizens.npc.shop.editor.show-on-right-click")) {
-                event.setCancelled(true);
-                Messaging.sendTr(event.getWhoClicked(), CommandMessages.NO_PERMISSION);
-                return;
-            }
             event.setCancelled(true);
             if (trait == null)
                 return;
@@ -1158,129 +852,6 @@ public class ShopTrait extends Trait {
             ctx.getSlot(6)
                     .setDescription("<f>Show shop on right click<br>" + shop.getName().equals(trait.rightClickShop));
         }
-
-        @MenuSlot(slot = { 1, 1 }, material = Material.ENDER_CHEST, amount = 1, title = "<f>View inventory")
-        public void onViewItemStorage(InventoryMenuSlot slot, CitizensInventoryClickEvent event) {
-            ctx.getMenu().transition(storage.createInventoryViewer(event.getWhoClicked()));
-        }
-    }
-
-    public static class NPCShopStorage {
-        @Persist
-        private double balance;
-        @Persist
-        private List<ItemStack> inventory = new ArrayList<>();
-        @Persist
-        private int inventorySizeLimit = -1;
-        @Persist
-        private boolean unlimited = true;
-
-        public boolean canAdd(int n) {
-            return inventorySizeLimit == -1 || inventory.size() + n < inventorySizeLimit;
-        }
-
-        public InventoryMenuPage createInventoryViewer(HumanEntity whoClicked) {
-            return new InventoryViewer(this);
-        }
-
-        public double getBalance() {
-            return balance;
-        }
-
-        public ItemStack[] getInventory() {
-            return inventory.toArray(new ItemStack[0]);
-        }
-
-        public int getInventorySizeLimit() {
-            return inventorySizeLimit;
-        }
-
-        public boolean isUnlimited() {
-            return unlimited;
-        }
-
-        public void setBalance(double amount) {
-            if (isUnlimited())
-                return;
-            this.balance = amount;
-        }
-
-        public void setInventory(List<ItemStack> items) {
-            this.inventory = items;
-        }
-
-        public void setInventorySizeLimit(int limit) {
-            this.inventorySizeLimit = limit;
-        }
-
-        public void setUnlimited(boolean res) {
-            this.unlimited = res;
-        }
-
-        public void transact(Consumer<ItemStack[]> action) {
-            transact(action, 0);
-        }
-
-        public void transact(Consumer<ItemStack[]> action, int additional) {
-            if (isUnlimited())
-                return;
-            ItemStack[] items = inventory.toArray(new ItemStack[0]);
-            action.accept(items);
-            inventory = Arrays.stream(items).filter(i -> i != null && i.getAmount() > 0 && i.getType() != Material.AIR)
-                    .collect(Collectors.toList());
-        }
-
-        @Menu(title = "Item storage", dimensions = { 4, 9 })
-        public static class InventoryViewer extends InventoryMenuPage {
-            private MenuContext ctx;
-            private NPCShopStorage storage;
-
-            public InventoryViewer() {
-            }
-
-            public InventoryViewer(NPCShopStorage storage) {
-                this.storage = storage;
-            }
-
-            @Override
-            public void initialise(MenuContext ctx) {
-                this.ctx = ctx;
-                for (int i = 0; i < 3 * 9; i++) {
-                    InventoryMenuSlot slot = ctx.getSlot(i);
-                    slot.clear();
-                    slot.setClickHandler(evt -> evt.setCancelled(false));
-                    if (i >= storage.inventory.size())
-                        break;
-                    slot.setItemStack(storage.inventory.get(i).clone());
-                }
-                ctx.getSlot(3 * 9 + 1).setItemStack(new ItemStack(Material.BEACON), "Unlimited<br>",
-                        storage.isUnlimited() ? ChatColor.GREEN + "On" : ChatColor.RED + "Off");
-                ctx.getSlot(3 * 9 + 1)
-                        .addClickHandler(InputMenus.toggler(res -> storage.setUnlimited(res), storage.isUnlimited()));
-                ctx.getSlot(3 * 9 + 2).setItemStack(
-                        new ItemStack(Util.getFallbackMaterial("COMPARATOR", "REDSTONE_COMPARATOR")),
-                        "Inventory size limit", storage.getInventorySizeLimit() == -1 ? ChatColor.GREEN + "Unlimited"
-                                : ChatColor.YELLOW + "" + storage.getInventorySizeLimit());
-                ctx.getSlot(3 * 9 + 2).addClickHandler(evt -> ctx.getMenu().transition(
-                        InputMenus.filteredStringSetter(() -> Integer.toString(storage.getInventorySizeLimit()), s -> {
-                            if (Ints.tryParse(s) == null)
-                                return false;
-                            storage.setInventorySizeLimit(Ints.tryParse(s));
-                            return true;
-                        })));
-            }
-
-            @Override
-            public void onClose(HumanEntity player) {
-                List<ItemStack> items = new ArrayList<>();
-                for (int i = 0; i < 3 * 9; i++) {
-                    if (ctx.getSlot(i).getCurrentItem() != null) {
-                        items.add(ctx.getSlot(i).getCurrentItem().clone());
-                    }
-                }
-                storage.setInventory(items);
-            }
-        }
     }
 
     @Menu(title = "Shop", type = InventoryType.CHEST, dimensions = { 5, 9 })
@@ -1290,19 +861,17 @@ public class ShopTrait extends Trait {
         private NPCShopItem lastClickedItem;
         private final Player player;
         private final NPCShop shop;
-        private final NPCShopStorage storage;
 
-        public NPCShopViewer(NPCShop shop, NPCShopStorage storage, Player player) {
+        public NPCShopViewer(NPCShop shop, Player player) {
             this.shop = shop;
             this.player = player;
-            this.storage = storage;
         }
 
         public void changePage(int newPage) {
             currentPage = newPage;
             NPCShopPage page = shop.pages.get(currentPage);
             if (page.title != null && !page.title.isEmpty()) {
-                CitizensAPI.getScheduler().runEntityTaskLater(player,
+                Bukkit.getScheduler().runTaskLater(CitizensAPI.getPlugin(),
                         () -> ctx.setTitle(Placeholders.replace(page.title, player)), 1);
             }
             for (int i = 0; i < ctx.getInventory().getSize(); i++) {
@@ -1314,7 +883,7 @@ public class ShopTrait extends Trait {
                 ctx.getSlot(i).setItemStack(item.getDisplayItem(player));
                 ctx.getSlot(i).setClickHandler(evt -> {
                     evt.setCancelled(true);
-                    item.onClick(shop, storage, (Player) evt.getWhoClicked(),
+                    item.onClick(shop, (Player) evt.getWhoClicked(),
                             new InventoryMultiplexer(evt.getWhoClicked().getInventory()), evt.isShiftClick(),
                             lastClickedItem == item);
                     lastClickedItem = item;
@@ -1360,17 +929,15 @@ public class ShopTrait extends Trait {
         private final Player player;
         private int selectedTrade = -1;
         private final NPCShop shop;
-        private final NPCShopStorage storage;
         private final Map<Integer, NPCShopItem> trades;
-        private final Object view;
+        private final InventoryView view;
 
-        public NPCTraderShopViewer(NPCShop shop, NPCShopStorage storage, Player player) {
+        public NPCTraderShopViewer(NPCShop shop, Player player) {
             this.shop = shop;
             this.player = player;
-            this.storage = storage;
-            Map<Integer, NPCShopItem> tradesMap = new HashMap<>();
+            Map<Integer, NPCShopItem> tradesMap = Maps.newHashMap();
             Merchant merchant = Bukkit.createMerchant(shop.getTitle());
-            List<MerchantRecipe> recipes = new ArrayList<>();
+            List<MerchantRecipe> recipes = Lists.newArrayList();
             for (NPCShopPage page : shop.pages) {
                 for (NPCShopItem item : page.items.values()) {
                     ItemStack result = item.getDisplayItem(player);
@@ -1378,24 +945,12 @@ public class ShopTrait extends Trait {
                         continue;
                     MerchantRecipe recipe = new MerchantRecipe(result.clone(), 100000000);
                     for (NPCShopAction action : item.cost) {
-                        if (!(action instanceof ItemAction))
-                            continue;
-                        ItemAction ia = (ItemAction) action;
-                        for (ItemStack stack : ia.items) {
-                            stack = stack.clone();
-                            if (ia.metaFilter.size() > 0) {
-                                // Minecraft implements its own trade selection logic on the client
-                                // Clear the custom component part of the itemstack since we will check it later anyway
-                                ItemMeta im = stack.getItemMeta();
-                                for (NamespacedKey nk : Lists.newArrayList(im.getPersistentDataContainer().getKeys())) {
-                                    im.getPersistentDataContainer().remove(nk);
-                                }
-                                NMS.clearCustomNBT(im);
-                                stack.setItemMeta(im);
+                        if (action instanceof ItemAction) {
+                            for (ItemStack stack : ((ItemAction) action).items) {
+                                recipe.addIngredient(stack.clone());
+                                if (recipe.getIngredients().size() == 2)
+                                    break;
                             }
-                            recipe.addIngredient(stack);
-                            if (recipe.getIngredients().size() == 2)
-                                break;
                         }
                     }
                     if (recipe.getIngredients().size() == 0)
@@ -1409,51 +964,18 @@ public class ShopTrait extends Trait {
             view = player.openMerchant(merchant, true);
         }
 
-        private int detectSelectedTrade(ItemStack item) {
-            List<Integer> dupes = new ArrayList<>();
-            for (Map.Entry<Integer, NPCShopItem> entry : trades.entrySet()) {
-                ItemStack result = entry.getValue().getDisplayItem(player).clone();
-                if (!item.isSimilar(result))
-                    continue;
-                dupes.add(entry.getKey());
-            }
-            if (dupes.size() == 1)
-                return dupes.get(0);
-            return -1;
-        }
-
         @EventHandler
         public void onInventoryClick(InventoryClickEvent evt) {
-            try {
-                if (!GET_VIEW.invoke(evt).equals(view) || evt.getSlotType() != SlotType.RESULT)
-                    return;
-            } catch (Throwable e) {
-                e.printStackTrace();
+            if (!evt.getView().equals(view))
                 return;
-            }
             evt.setCancelled(true);
-            if (evt.getCurrentItem() != null && evt.getCurrentItem().getType() != Material.AIR) {
-                int detected = detectSelectedTrade(evt.getCurrentItem());
-                if (detected != -1 && detected != selectedTrade) {
-                    selectedTrade = detected;
-                    lastClickedTrade = -1;
-                }
-            }
-            if (selectedTrade == -1)
-                return;
-            if (!trades.containsKey(selectedTrade)) {
-                Messaging.severe("Invalid trade selection", selectedTrade, "from", evt.getWhoClicked());
-                return;
-            }
-            if (!evt.getAction().name().contains("PICKUP")
-                    || (evt.getCursor() != null && evt.getCursor().getType() != Material.AIR))
+            if (evt.getSlotType() != SlotType.RESULT || !evt.getAction().name().contains("PICKUP"))
                 return;
             Inventory syntheticInventory = Bukkit.createInventory(null, 9);
             syntheticInventory.setItem(0, evt.getClickedInventory().getItem(0));
             syntheticInventory.setItem(1, evt.getClickedInventory().getItem(1));
-
             InventoryMultiplexer multiplexer = new InventoryMultiplexer(player.getInventory(), syntheticInventory);
-            trades.get(selectedTrade).onClick(shop, storage, player, multiplexer, evt.getClick().isShiftClick(),
+            trades.get(selectedTrade).onClick(shop, player, multiplexer, evt.getClick().isShiftClick(),
                     lastClickedTrade == selectedTrade);
             evt.getClickedInventory().setItem(0, syntheticInventory.getItem(0));
             evt.getClickedInventory().setItem(1, syntheticInventory.getItem(1));
@@ -1469,18 +991,11 @@ public class ShopTrait extends Trait {
 
         @EventHandler
         public void onTradeSelect(TradeSelectEvent evt) {
-            try {
-                if (!GET_VIEW.invoke(evt).equals(view))
-                    return;
-            } catch (Throwable e) {
-                e.printStackTrace();
+            if (!evt.getView().equals(view))
                 return;
-            }
             selectedTrade = evt.getIndex();
             lastClickedTrade = -1;
         }
-
-        private static final MethodHandle GET_VIEW = NMS.getMethodHandle(InventoryEvent.class, "getView", true);
     }
 
     public enum ShopType {
@@ -1514,7 +1029,5 @@ public class ShopTrait extends Trait {
         NPCShopAction.register(MoneyAction.class, "money", new MoneyActionGUI());
         NPCShopAction.register(CommandAction.class, "command", new CommandActionGUI());
         NPCShopAction.register(ExperienceAction.class, "experience", new ExperienceActionGUI());
-        NPCShopAction.register(OpenShopAction.class, "open_shop", new OpenShopActionGUI());
-        NPCShopAction.register(ConditionAction.class, "condition", new ConditionActionGUI());
     }
 }

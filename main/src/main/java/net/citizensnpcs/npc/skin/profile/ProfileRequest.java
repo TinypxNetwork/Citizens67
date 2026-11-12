@@ -3,9 +3,10 @@ package net.citizensnpcs.npc.skin.profile;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.Objects;
-import java.util.function.Consumer;
 
 import javax.annotation.Nullable;
+
+import org.bukkit.Bukkit;
 
 import com.mojang.authlib.GameProfile;
 
@@ -19,7 +20,7 @@ import net.citizensnpcs.api.CitizensAPI;
  * </p>
  */
 public class ProfileRequest {
-    private Deque<Consumer<ProfileRequest>> handlers;
+    private Deque<ProfileFetchHandler> handlers;
     private final String playerName;
     private GameProfile profile;
     private volatile ProfileFetchResult result = ProfileFetchResult.PENDING;
@@ -33,7 +34,7 @@ public class ProfileRequest {
      *            Optional handler to handle the result for the profile. Handler always invoked from the main thread.
      */
 
-    public ProfileRequest(String playerName, Consumer<ProfileRequest> handler) {
+    public ProfileRequest(String playerName, ProfileFetchHandler handler) {
         Objects.requireNonNull(playerName);
 
         this.playerName = playerName;
@@ -53,36 +54,17 @@ public class ProfileRequest {
      * @param handler
      *            The result handler.
      */
-    public void addHandler(Consumer<ProfileRequest> handler) {
+    public void addHandler(ProfileFetchHandler handler) {
         Objects.requireNonNull(handler);
 
         if (result != ProfileFetchResult.PENDING) {
-            handler.accept(this);
+            handler.onResult(this);
             return;
         }
         if (handlers == null) {
             handlers = new ArrayDeque<>();
         }
         handlers.addLast(handler);
-    }
-
-    @Override
-    public boolean equals(Object obj) {
-        if (this == obj) {
-            return true;
-        }
-        if (obj == null || getClass() != obj.getClass()) {
-            return false;
-        }
-        ProfileRequest other = (ProfileRequest) obj;
-        if (playerName == null) {
-            if (other.playerName != null) {
-                return false;
-            }
-        } else if (!playerName.equals(other.playerName)) {
-            return false;
-        }
-        return true;
     }
 
     /**
@@ -110,11 +92,6 @@ public class ProfileRequest {
         return result;
     }
 
-    @Override
-    public int hashCode() {
-        return 31 + ((playerName == null) ? 0 : playerName.hashCode());
-    }
-
     /**
      * Invoked to set the profile result.
      *
@@ -130,7 +107,7 @@ public class ProfileRequest {
     void setResult(@Nullable GameProfile profile, ProfileFetchResult result) {
         if (!CitizensAPI.hasImplementation())
             return;
-        CitizensAPI.getScheduler().runTask(() -> {
+        Bukkit.getScheduler().scheduleSyncDelayedTask(CitizensAPI.getPlugin(), () -> {
             ProfileRequest.this.profile = profile;
             ProfileRequest.this.result = result;
 
@@ -138,7 +115,7 @@ public class ProfileRequest {
                 return;
 
             while (!handlers.isEmpty()) {
-                handlers.removeFirst().accept(ProfileRequest.this);
+                handlers.removeFirst().onResult(ProfileRequest.this);
             }
             handlers = null;
         });

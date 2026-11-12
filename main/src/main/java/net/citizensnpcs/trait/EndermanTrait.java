@@ -25,8 +25,8 @@ public class EndermanTrait extends Trait {
 
     @Override
     public void run() {
-        if (npc.getCosmeticEntity() instanceof Enderman) {
-            Enderman enderman = (Enderman) npc.getCosmeticEntity();
+        if (npc.getEntity() instanceof Enderman) {
+            Enderman enderman = (Enderman) npc.getEntity();
             NMS.setEndermanAngry(enderman, angry);
         }
     }

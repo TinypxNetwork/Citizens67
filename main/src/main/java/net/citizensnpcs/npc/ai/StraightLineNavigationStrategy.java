@@ -62,7 +62,7 @@ public class StraightLineNavigationStrategy extends AbstractPathStrategy {
             return true;
 
         Location currLoc = npc.getEntity().getLocation();
-        if (params.withinMargin(currLoc, destination)) {
+        if (currLoc.distance(destination) <= params.distanceMargin()) {
             if (npc.isFlyable()) {
                 npc.getEntity().setVelocity(new Vector(0, 0, 0));
             }
@@ -87,8 +87,8 @@ public class StraightLineNavigationStrategy extends AbstractPathStrategy {
             destVector = destLoc.toVector();
         }
         double dX = destVector.getX() - currLoc.getX();
-        double dY = destVector.getY() - currLoc.getY();
         double dZ = destVector.getZ() - currLoc.getZ();
+        double dY = destVector.getY() - currLoc.getY();
         double xzDistance = dX * dX + dZ * dZ;
         double distance = xzDistance + dY * dY;
         if (npc.isFlyable()) {
@@ -115,12 +115,12 @@ public class StraightLineNavigationStrategy extends AbstractPathStrategy {
             }
         } else if (npc.getEntity() instanceof LivingEntity) {
             NMS.setDestination(npc.getEntity(), destVector.getX(), destVector.getY(), destVector.getZ(),
-                    params.speedModifier());
+                    params.speed());
         } else {
             Vector dir = destVector.subtract(currLoc.toVector()).normalize().multiply(0.2);
             Block in = currLoc.getBlock();
             if (distance > 0 && dY >= 1 && xzDistance <= 2.75
-                    || dY >= 0.2 && MinecraftBlockExaminer.isLiquidOrWaterlogged(in)) {
+                    || dY >= 0.2 && MinecraftBlockExaminer.isLiquidOrInLiquid(in)) {
                 dir.add(new Vector(0, 0.75, 0));
             }
             Util.faceLocation(npc.getEntity(), destLoc);

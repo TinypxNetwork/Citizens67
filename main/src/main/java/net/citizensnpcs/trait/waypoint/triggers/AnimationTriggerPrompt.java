@@ -1,6 +1,5 @@
 package net.citizensnpcs.trait.waypoint.triggers;
 
-import java.util.ArrayList;
 import java.util.List;
 
 import org.bukkit.Location;
@@ -21,7 +20,7 @@ import net.citizensnpcs.util.PlayerAnimation;
 import net.citizensnpcs.util.Util;
 
 public class AnimationTriggerPrompt extends StringPrompt implements WaypointTriggerPrompt {
-    private final List<PlayerAnimation> animations = new ArrayList<>();
+    private final List<PlayerAnimation> animations = Lists.newArrayList();
     private Location at;
 
     @Override
@@ -30,9 +29,9 @@ public class AnimationTriggerPrompt extends StringPrompt implements WaypointTrig
             return (Prompt) context.getSessionData("previous");
         if (input.startsWith("at ")) {
             try {
-                at = CommandContext.parseLocation(context.getForWhom() instanceof Player
-                        ? ((Player) context.getForWhom()).getLocation().getWorld()
-                        : null, input.replaceFirst("at ", ""));
+                at = CommandContext.parseLocation(
+                        context.getForWhom() instanceof Player ? ((Player) context.getForWhom()).getLocation() : null,
+                        input.replaceFirst("at ", ""));
                 Messaging.send((CommandSender) context.getForWhom(), Messages.WAYPOINT_TRIGGER_ANIMATION_AT_SET,
                         Util.prettyPrintLocation(at));
             } catch (CommandException e) {

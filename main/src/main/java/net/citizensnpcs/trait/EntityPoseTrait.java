@@ -27,6 +27,7 @@ public class EntityPoseTrait extends Trait {
 
     public void setPose(EntityPose pose) {
         this.pose = pose;
+
     }
 
     public enum EntityPose {
@@ -55,10 +56,10 @@ public class EntityPoseTrait extends Trait {
             this.id = id;
         }
 
-        /**
-         * @return Internal minecraft ID
-         */
         @Deprecated
+        /**
+         * Internal minecraft ID
+         */
         public int id() {
             return id;
         }

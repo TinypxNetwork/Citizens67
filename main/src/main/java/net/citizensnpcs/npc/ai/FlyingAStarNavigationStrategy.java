@@ -19,7 +19,6 @@ import net.citizensnpcs.api.ai.NavigatorParameters;
 import net.citizensnpcs.api.ai.TargetType;
 import net.citizensnpcs.api.ai.event.CancelReason;
 import net.citizensnpcs.api.astar.AStarMachine;
-import net.citizensnpcs.api.astar.AStarMachine.AStarState;
 import net.citizensnpcs.api.astar.pathfinder.BlockExaminer;
 import net.citizensnpcs.api.astar.pathfinder.FlyingBlockExaminer;
 import net.citizensnpcs.api.astar.pathfinder.MinecraftBlockExaminer;
@@ -27,7 +26,6 @@ import net.citizensnpcs.api.astar.pathfinder.Path;
 import net.citizensnpcs.api.astar.pathfinder.VectorGoal;
 import net.citizensnpcs.api.astar.pathfinder.VectorNode;
 import net.citizensnpcs.api.npc.NPC;
-import net.citizensnpcs.api.util.SpigotUtil;
 import net.citizensnpcs.util.NMS;
 import net.citizensnpcs.util.PlayerAnimation;
 import net.citizensnpcs.util.Util;
@@ -38,7 +36,7 @@ public class FlyingAStarNavigationStrategy extends AbstractPathStrategy {
     private final NavigatorParameters parameters;
     private Path plan;
     private boolean planned;
-    private AStarState<VectorNode> state;
+    private AStarMachine<VectorNode, Path>.AStarState state;
     private final Location target;
     private Vector vector;
 
@@ -86,8 +84,8 @@ public class FlyingAStarNavigationStrategy extends AbstractPathStrategy {
         }
         Location location = npc.getEntity().getLocation();
         VectorGoal goal = new VectorGoal(target, (float) parameters.pathDistanceMargin());
-        state = ASTAR.getStateFor(goal,
-                new VectorNode(goal, location, new NMSChunkBlockSource(location, parameters.range()), parameters));
+        state = ASTAR.getStateFor(goal, new VectorNode(goal, location,
+                new NMSChunkBlockSource(location, parameters.range()), parameters.examiners()));
     }
 
     public void setPlan(Path path) {
@@ -118,8 +116,8 @@ public class FlyingAStarNavigationStrategy extends AbstractPathStrategy {
             if (state == null) {
                 initialisePathfinder();
             }
-            int maxIterations = Setting.CITIZENS_PATHFINDER_MAXIMUM_ASTAR_ITERATIONS.asInt();
-            int iterationsPerTick = Setting.CITIZENS_PATHFINDER_ASTAR_ITERATIONS_PER_TICK.asInt();
+            int maxIterations = Setting.MAXIMUM_ASTAR_ITERATIONS.asInt();
+            int iterationsPerTick = Setting.ASTAR_ITERATIONS_PER_TICK.asInt();
             Path plan = ASTAR.run(state, iterationsPerTick);
             if (plan == null) {
                 if (state.isEmpty()) {
@@ -138,7 +136,7 @@ public class FlyingAStarNavigationStrategy extends AbstractPathStrategy {
         if (getCancelReason() != null || plan == null || plan.isComplete())
             return true;
         Location current = npc.getEntity().getLocation();
-        if (parameters.withinMargin(current.toVector(), vector)) {
+        if (current.toVector().distance(vector) <= parameters.distanceMargin()) {
             plan.update(npc);
             if (plan.isComplete())
                 return true;
@@ -148,33 +146,38 @@ public class FlyingAStarNavigationStrategy extends AbstractPathStrategy {
             npc.getEntity().getWorld().playEffect(vector.toLocation(npc.getEntity().getWorld()), Effect.ENDER_SIGNAL,
                     0);
         }
-        if (npc.getEntity().getType() == EntityType.PLAYER && SpigotUtil.getVersion()[0] > 8) {
+        if (npc.getEntity().getType() == EntityType.PLAYER) {
             ItemStack stack = ((Player) npc.getEntity()).getInventory().getChestplate();
-            if (stack != null && stack.getType() == Material.ELYTRA
-                    && !MinecraftBlockExaminer.canStandOn(current.getBlock().getRelative(BlockFace.DOWN))) {
-                PlayerAnimation.START_ELYTRA.play((Player) npc.getEntity());
+            try {
+                if (stack != null && stack.getType() == Material.ELYTRA
+                        && !MinecraftBlockExaminer.canStandOn(current.getBlock().getRelative(BlockFace.DOWN))) {
+                    PlayerAnimation.START_ELYTRA.play((Player) npc.getEntity());
+                }
+            } catch (Exception ex) {
+                // 1.8 compatibility
             }
         }
-        Vector dest = vector;
-        double dx = dest.getX() - current.getX();
-        double dy = dest.getY() - current.getY();
-        double dz = dest.getZ() - current.getZ();
+        Vector centeredDest = new Vector(vector.getX() + 0.5D, vector.getY() + 0.1D, vector.getZ() + 0.5D);
+        double d0 = centeredDest.getX() - current.getX();
+        double d1 = centeredDest.getY() - current.getY();
+        double d2 = centeredDest.getZ() - current.getZ();
 
         Vector velocity = npc.getEntity().getVelocity();
         double motX = velocity.getX(), motY = velocity.getY(), motZ = velocity.getZ();
 
-        motX += (Math.signum(dx) * 0.5D - motX) * 0.1;
-        motY += (Math.signum(dy) - motY) * 0.1;
-        motZ += (Math.signum(dz) * 0.5D - motZ) * 0.1;
+        motX += (Math.signum(d0) * 0.5D - motX) * 0.1;
+        motY += (Math.signum(d1) - motY) * 0.1;
+        motZ += (Math.signum(d2) * 0.5D - motZ) * 0.1;
         velocity.setX(motX).setY(motY).setZ(motZ).multiply(parameters.speed());
         npc.getEntity().setVelocity(velocity);
+
         if (npc.getEntity().getType() != EntityType.ENDER_DRAGON) {
             NMS.setVerticalMovement(npc.getEntity(), 0.5);
-            Util.faceLocation(npc.getEntity(), dest.toLocation(npc.getEntity().getWorld()));
+            Util.faceLocation(npc.getEntity(), centeredDest.toLocation(npc.getEntity().getWorld()));
         }
         plan.run(npc);
         return false;
     }
 
-    private static AStarMachine<VectorNode, Path> ASTAR = AStarMachine.createWithVectorStorage();
+    private static AStarMachine<VectorNode, Path> ASTAR = AStarMachine.createWithDefaultStorage();
 }

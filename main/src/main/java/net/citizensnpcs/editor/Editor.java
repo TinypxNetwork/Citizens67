@@ -13,6 +13,7 @@ import net.citizensnpcs.api.CitizensAPI;
 import net.citizensnpcs.api.util.Messaging;
 import net.citizensnpcs.util.Messages;
 
+// TODO: convert to non-static?
 public abstract class Editor implements Listener {
     public abstract void begin();
 

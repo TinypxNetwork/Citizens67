@@ -1,9 +1,7 @@
 package net.citizensnpcs;
 
 import java.io.File;
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
@@ -24,12 +22,12 @@ import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.RegisteredServiceProvider;
 import org.bukkit.plugin.java.JavaPlugin;
 
-import com.github.retrooper.packetevents.PacketEvents;
 import com.google.common.collect.Iterables;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 import com.mojang.authlib.GameProfile;
 
 import ch.ethz.globis.phtree.PhTreeHelper;
-import io.github.retrooper.packetevents.factory.spigot.SpigotPacketEventsBuilder;
 import net.byteflux.libby.BukkitLibraryManager;
 import net.byteflux.libby.Library;
 import net.byteflux.libby.LibraryManager;
@@ -39,16 +37,15 @@ import net.citizensnpcs.api.CitizensAPI;
 import net.citizensnpcs.api.CitizensPlugin;
 import net.citizensnpcs.api.LocationLookup;
 import net.citizensnpcs.api.NMSHelper;
-import net.citizensnpcs.api.ai.tree.BehaviorRegistry;
-import net.citizensnpcs.api.astar.pathfinder.AsyncChunkCache;
+import net.citizensnpcs.api.ai.speech.SpeechContext;
 import net.citizensnpcs.api.command.CommandManager;
 import net.citizensnpcs.api.command.Injector;
+import net.citizensnpcs.api.event.CitizensDisableEvent;
 import net.citizensnpcs.api.event.CitizensEnableEvent;
 import net.citizensnpcs.api.event.CitizensPreReloadEvent;
 import net.citizensnpcs.api.event.CitizensReloadEvent;
 import net.citizensnpcs.api.event.DespawnReason;
 import net.citizensnpcs.api.exception.NPCLoadException;
-import net.citizensnpcs.api.expr.ExpressionRegistry;
 import net.citizensnpcs.api.npc.MemoryNPCDataStore;
 import net.citizensnpcs.api.npc.NPC;
 import net.citizensnpcs.api.npc.NPCDataStore;
@@ -57,6 +54,7 @@ import net.citizensnpcs.api.npc.SimpleNPCDataStore;
 import net.citizensnpcs.api.npc.templates.TemplateRegistry;
 import net.citizensnpcs.api.trait.Trait;
 import net.citizensnpcs.api.trait.TraitFactory;
+import net.citizensnpcs.api.trait.TraitInfo;
 import net.citizensnpcs.api.util.Messaging;
 import net.citizensnpcs.api.util.Placeholders;
 import net.citizensnpcs.api.util.SpigotUtil;
@@ -64,7 +62,6 @@ import net.citizensnpcs.api.util.SpigotUtil.InventoryViewAPI;
 import net.citizensnpcs.api.util.Storage;
 import net.citizensnpcs.api.util.Translator;
 import net.citizensnpcs.api.util.YamlStorage;
-import net.citizensnpcs.api.util.schedulers.SchedulerTask;
 import net.citizensnpcs.commands.AdminCommands;
 import net.citizensnpcs.commands.EditorCommands;
 import net.citizensnpcs.commands.NPCCommands;
@@ -75,39 +72,27 @@ import net.citizensnpcs.editor.Editor;
 import net.citizensnpcs.npc.CitizensNPCRegistry;
 import net.citizensnpcs.npc.CitizensTraitFactory;
 import net.citizensnpcs.npc.NPCSelector;
-import net.citizensnpcs.npc.ai.tree.CitizensBehaviorRegistry;
-import net.citizensnpcs.npc.ai.tree.MolangEngine;
 import net.citizensnpcs.npc.skin.Skin;
 import net.citizensnpcs.npc.skin.profile.ProfileFetcher;
-import net.citizensnpcs.trait.scoreboard.BukkitScoreboardManager;
-import net.citizensnpcs.trait.scoreboard.CitizensScoreboardManager;
-import net.citizensnpcs.trait.scoreboard.MegavexScoreboardManager;
+import net.citizensnpcs.packet.core.PacketNpcService;
+import net.citizensnpcs.packet.core.PacketSinkLoader;
+import net.citizensnpcs.trait.ShopTrait;
 import net.citizensnpcs.trait.shop.StoredShops;
 import net.citizensnpcs.util.Messages;
 import net.citizensnpcs.util.NMS;
 import net.citizensnpcs.util.PlayerUpdateTask;
 import net.citizensnpcs.util.SkinProperty;
+import net.citizensnpcs.util.Util;
 import net.milkbowl.vault.economy.Economy;
 
 public class Citizens extends JavaPlugin implements CitizensPlugin {
-    private final List<NPCRegistry> anonymousRegistries = new ArrayList<>();
-    private AsyncChunkCache asyncChunkCache;
-    private BehaviorRegistry behaviorRegistry;
+    private final List<NPCRegistry> anonymousRegistries = Lists.newArrayList();
     private final CommandManager commands = new CommandManager();
     private Settings config;
-    private DenizenHook denizenHook;
     private boolean enabled;
-    private ExpressionRegistry expressionRegistry;
     private LocationLookup locationLookup;
     private final NMSHelper nmsHelper = new NMSHelper() {
-        private boolean SUPPORT_OWNER_PROFILE = false;
-        {
-            try {
-                SkullMeta.class.getMethod("getOwnerProfile");
-                SUPPORT_OWNER_PROFILE = true;
-            } catch (Exception e) {
-            }
-        }
+        private boolean SUPPORT_OWNER_PROFILE = true;
 
         @Override
         public OfflinePlayer getPlayer(BlockCommandSender sender) {
@@ -131,12 +116,20 @@ public class Citizens extends JavaPlugin implements CitizensPlugin {
             GameProfile profile = NMS.getProfile(meta);
             if (profile == null) {
                 if (SUPPORT_OWNER_PROFILE) {
-                    profile = new GameProfile(meta.getOwnerProfile().getUniqueId(), meta.getOwnerProfile().getName());
-                } else {
+                    try {
+                        profile = new GameProfile(meta.getOwnerProfile().getUniqueId(),
+                                meta.getOwnerProfile().getName());
+                    } catch (Exception e) {
+                        SUPPORT_OWNER_PROFILE = false;
+                    }
+                }
+                if (profile == null) {
                     profile = new GameProfile(UUID.randomUUID(), null);
                 }
             }
-            NMS.setProfile(meta, new SkinProperty("textures", texture, null).applyProperties(profile));
+            profile.getProperties().put("textures",
+                    new com.mojang.authlib.properties.Property("textures", texture, null));
+            NMS.setProfile(meta, profile);
         }
 
         @Override
@@ -149,29 +142,25 @@ public class Citizens extends JavaPlugin implements CitizensPlugin {
         }
     };
     private CitizensNPCRegistry npcRegistry;
-    private boolean packetEventsEnabled;
-    private PacketEventsHook packetEventsHook;
-    private SchedulerTask playerUpdateTask;
     private boolean saveOnDisable = true;
     private NPCDataStore saves;
-    private CitizensScoreboardManager scoreboardManager;
     private NPCSelector selector;
     private StoredShops shops;
-    private final Map<String, NPCRegistry> storedRegistries = new HashMap<>();
+    private final Map<String, NPCRegistry> storedRegistries = Maps.newHashMap();
     private TemplateRegistry templateRegistry;
     private NPCRegistry temporaryRegistry;
     private CitizensTraitFactory traitFactory;
 
     @Override
     public NPCRegistry createAnonymousNPCRegistry(NPCDataStore store) {
-        CitizensNPCRegistry anon = new CitizensNPCRegistry(store, this, "anonymous-" + UUID.randomUUID().toString());
+        CitizensNPCRegistry anon = new CitizensNPCRegistry(store, "anonymous-" + UUID.randomUUID().toString());
         anonymousRegistries.add(anon);
         return anon;
     }
 
     @Override
     public NPCRegistry createNamedNPCRegistry(String name, NPCDataStore store) {
-        NPCRegistry created = new CitizensNPCRegistry(store, this, name);
+        NPCRegistry created = new CitizensNPCRegistry(store, name);
         storedRegistries.put(name, created);
         return created;
     }
@@ -191,30 +180,13 @@ public class Citizens extends JavaPlugin implements CitizensPlugin {
 
             if (save) {
                 if (registry == npcRegistry) {
-                    storeNPCsNow();
+                    storeNPCs(false);
                 } else {
                     registry.saveToStore();
                 }
             }
-            if (SpigotUtil.isFoliaServer() && !isEnabled())
-                return;
             registry.despawnNPCs(DespawnReason.RELOAD);
         }
-    }
-
-    @Override
-    public AsyncChunkCache getAsyncChunkCache() {
-        if (asyncChunkCache == null) {
-            // TODO: should parallelism be configurable? or too confusing?
-            asyncChunkCache = new AsyncChunkCache(this, Runtime.getRuntime().availableProcessors() > 12 ? 4 : 2,
-                    Setting.CITIZENS_PATHFINDER_ASYNC_CHUNK_CACHE_TTL.asDuration().toMillis());
-        }
-        return asyncChunkCache;
-    }
-
-    @Override
-    public BehaviorRegistry getBehaviorRegistry() {
-        return behaviorRegistry;
     }
 
     @Override
@@ -222,18 +194,9 @@ public class Citizens extends JavaPlugin implements CitizensPlugin {
         return commands;
     }
 
-    public NPCDataStore getDefaultNPCDataStore() {
-        return saves;
-    }
-
     @Override
-    public NPCSelector getDefaultNPCSelector() {
+    public net.citizensnpcs.api.npc.NPCSelector getDefaultNPCSelector() {
         return selector;
-    }
-
-    @Override
-    public ExpressionRegistry getExpressionRegistry() {
-        return expressionRegistry;
     }
 
     @Override
@@ -295,14 +258,6 @@ public class Citizens extends JavaPlugin implements CitizensPlugin {
         return getClassLoader();
     }
 
-    public PacketEventsHook getPacketEventsListener() {
-        return packetEventsHook;
-    }
-
-    public CitizensScoreboardManager getScoreboardManager() {
-        return scoreboardManager;
-    }
-
     public StoredShops getShops() {
         return shops;
     }
@@ -322,62 +277,51 @@ public class Citizens extends JavaPlugin implements CitizensPlugin {
         return traitFactory;
     }
 
-    private void initialiseBehaviorRegistry() {
-        expressionRegistry = new ExpressionRegistry();
-        expressionRegistry.registerEngine(new MolangEngine());
-        behaviorRegistry = new CitizensBehaviorRegistry(expressionRegistry);
-    }
+    private void loadMavenLibraries() {
+        getLogger().info("Loading external libraries");
 
-    private void loadAdventure() {
         LibraryManager lib = new BukkitLibraryManager(this);
         lib.addMavenCentral();
-        lib.setLogLevel(LogLevel.INFO);
-
+        lib.setLogLevel(LogLevel.WARN);
         // Unfortunately, transitive dependency management is not supported in this library.
+        lib.loadLibrary(
+                Library.builder().groupId("ch{}ethz{}globis{}phtree").artifactId("phtree").version("2.8.0").build());
+        lib.loadLibrary(Library.builder().groupId("net{}sf{}trove4j").artifactId("trove4j").version("3.0.3")
+                .relocate("gnu{}trove", "clib{}trove").build());
         lib.loadLibrary(Library.builder().groupId("net{}kyori").artifactId("adventure-text-minimessage")
-                .version("4.26.1").relocate("net{}kyori", "clib{}net{}kyori").build());
-        lib.loadLibrary(Library.builder().groupId("net{}kyori").artifactId("adventure-api").version("4.26.1")
+                .version("4.17.0").relocate("net{}kyori", "clib{}net{}kyori").build());
+        lib.loadLibrary(Library.builder().groupId("net{}kyori").artifactId("adventure-api").version("4.17.0")
                 .relocate("net{}kyori", "clib{}net{}kyori").build());
-        lib.loadLibrary(Library.builder().groupId("net{}kyori").artifactId("adventure-key").version("4.26.1")
+        lib.loadLibrary(Library.builder().groupId("net{}kyori").artifactId("adventure-key").version("4.17.0")
                 .relocate("net{}kyori", "clib{}net{}kyori").build());
         lib.loadLibrary(Library.builder().groupId("net{}kyori").artifactId("examination-api").version("1.3.0")
                 .relocate("net{}kyori", "clib{}net{}kyori").build());
         lib.loadLibrary(Library.builder().groupId("net{}kyori").artifactId("examination-string").version("1.3.0")
                 .relocate("net{}kyori", "clib{}net{}kyori").build());
-        lib.loadLibrary(Library.builder().groupId("net{}kyori").artifactId("adventure-platform-bukkit").version("4.4.1")
+        lib.loadLibrary(Library.builder().groupId("net{}kyori").artifactId("adventure-platform-bukkit").version("4.3.3")
                 .relocate("net{}kyori", "clib{}net{}kyori").build());
-        lib.loadLibrary(Library.builder().groupId("net{}kyori").artifactId("adventure-platform-api").version("4.4.1")
+        lib.loadLibrary(Library.builder().groupId("net{}kyori").artifactId("adventure-platform-api").version("4.3.3")
                 .relocate("net{}kyori", "clib{}net{}kyori").build());
         lib.loadLibrary(Library.builder().groupId("net{}kyori").artifactId("adventure-text-serializer-bungeecord")
-                .version("4.4.1").relocate("net{}kyori", "clib{}net{}kyori").build());
+                .version("4.3.3").relocate("net{}kyori", "clib{}net{}kyori").build());
         lib.loadLibrary(Library.builder().groupId("net{}kyori").artifactId("adventure-text-serializer-legacy")
-                .version("4.26.1").relocate("net{}kyori", "clib{}net{}kyori").build());
-        lib.loadLibrary(Library.builder().groupId("net{}kyori").artifactId("adventure-nbt").version("4.26.1")
+                .version("4.13.1").relocate("net{}kyori", "clib{}net{}kyori").build());
+        lib.loadLibrary(Library.builder().groupId("net{}kyori").artifactId("adventure-nbt").version("4.13.1")
                 .relocate("net{}kyori", "clib{}net{}kyori").build());
         lib.loadLibrary(Library.builder().groupId("net{}kyori").artifactId("adventure-text-serializer-gson")
-                .version("4.26.1").relocate("net{}kyori", "clib{}net{}kyori").build());
-        lib.loadLibrary(Library.builder().groupId("net{}kyori").artifactId("adventure-text-serializer-json")
-                .version("4.26.1").relocate("net{}kyori", "clib{}net{}kyori").build());
-        lib.loadLibrary(Library.builder().groupId("net{}kyori").artifactId("option").version("1.1.0")
-                .relocate("net{}kyori", "clib{}net{}kyori").build());
-        lib.loadLibrary(Library.builder().groupId("org{}jspecify").artifactId("jspecify").version("1.0.0").build());
-        lib.loadLibrary(Library.builder().groupId("net{}kyori").artifactId("adventure-text-serializer-commons")
-                .version("4.26.1").relocate("net{}kyori", "clib{}net{}kyori").build());
+                .version("4.13.1").relocate("net{}kyori", "clib{}net{}kyori").build());
         lib.loadLibrary(Library.builder().groupId("net{}kyori").artifactId("adventure-text-serializer-gson-legacy-impl")
-                .version("4.26.1").relocate("net{}kyori", "clib{}net{}kyori").build());
-        lib.loadLibrary(Library.builder().groupId("net{}kyori").artifactId("adventure-text-serializer-json-legacy-impl")
-                .version("4.26.1").relocate("net{}kyori", "clib{}net{}kyori").build());
-        lib.loadLibrary(Library.builder().groupId("net{}kyori").artifactId("adventure-platform-facet").version("4.4.1")
+                .version("4.13.1").relocate("net{}kyori", "clib{}net{}kyori").build());
+        lib.loadLibrary(Library.builder().groupId("net{}kyori").artifactId("adventure-platform-facet").version("4.3.3")
                 .relocate("net{}kyori", "clib{}net{}kyori").build());
         lib.loadLibrary(Library.builder().groupId("net{}kyori").artifactId("adventure-platform-viaversion")
-                .version("4.4.1").relocate("net{}kyori", "clib{}net{}kyori").build());
-
-        lib.loadLibrary(Library.builder().groupId("net{}megavex").artifactId("scoreboard-library-api").version("2.8.2")
-                .relocate("net{}kyori", "clib{}net{}kyori")
-                .relocate("net{}megavex{}scoreboardlibrary", "clib{}net{}megavex{}scoreboardlibrary").build());
-        lib.loadLibrary(Library.builder().groupId("net{}megavex").artifactId("scoreboard-library-implementation")
-                .version("2.8.2").relocate("net{}kyori", "clib{}net{}kyori")
-                .relocate("net{}megavex{}scoreboardlibrary", "clib{}net{}megavex{}scoreboardlibrary").build());
+                .version("4.3.3").relocate("net{}kyori", "clib{}net{}kyori").build());
+        try {
+            Class.forName("org.joml.Vector3f");
+        } catch (Throwable t) {
+            lib.loadLibrary(Library.builder().groupId("org{}joml").artifactId("joml").version("1.10.5").build());
+        }
+        PhTreeHelper.enablePooling(false);
     }
 
     @Override
@@ -388,7 +332,7 @@ public class Citizens extends JavaPlugin implements CitizensPlugin {
 
     public void onDependentPluginDisable() {
         if (enabled) {
-            storeNPCsNow();
+            storeNPCs(false);
             saveOnDisable = false;
         }
     }
@@ -398,79 +342,67 @@ public class Citizens extends JavaPlugin implements CitizensPlugin {
         if (!enabled)
             return;
 
+        Bukkit.getPluginManager().callEvent(new CitizensDisableEvent());
         Editor.leaveAll();
         despawnNPCs(saveOnDisable);
         HandlerList.unregisterAll(this);
 
-        behaviorRegistry = null;
         templateRegistry = null;
         npcRegistry = null;
         locationLookup = null;
-        if (asyncChunkCache != null) {
-            asyncChunkCache.shutdown();
-            asyncChunkCache = null;
-        }
         enabled = false;
         saveOnDisable = true;
         ProfileFetcher.shutdown();
         Skin.clearCache();
+        PacketNpcService packetNpcService = PacketNpcService.getInstance();
+        if (packetNpcService != null) {
+            packetNpcService.shutdown();
+        }
         NMS.shutdown();
         CitizensAPI.shutdown();
-        if (packetEventsEnabled) {
-            PacketEvents.getAPI().terminate();
-        }
-        scoreboardManager.close();
-        scoreboardManager = null;
     }
 
     @Override
     public void onEnable() {
-        loadAdventure();
-        PhTreeHelper.enablePooling(false);
-        PhTreeHelper.ARRAY_POOLING_POOL_SIZE = 0;
-        PhTreeHelper.ARRAY_POOLING_MAX_ARRAY_SIZE = 0;
-        PhTreeHelper.MAX_OBJECT_POOL_SIZE = 0;
+        loadMavenLibraries();
 
         CitizensAPI.setImplementation(this);
         config = new Settings(getDataFolder());
         setupTranslator();
         // Disable if the server is not using the compatible Minecraft version
+        String mcVersion = SpigotUtil.getMinecraftPackage();
         try {
-            NMS.loadBridge();
+            NMS.loadBridge(mcVersion);
         } catch (Exception e) {
             if (Messaging.isDebugging()) {
                 e.printStackTrace();
             }
-            Messaging.severeTr(Messages.CITIZENS_INCOMPATIBLE, getDescription().getVersion());
+            Messaging.severeTr(Messages.CITIZENS_INCOMPATIBLE, getDescription().getVersion(), mcVersion);
             NMS.shutdown();
             CitizensAPI.shutdown();
             Bukkit.getPluginManager().disablePlugin(this);
             return;
         }
         saves = createStorage(getDataFolder());
-        initialiseBehaviorRegistry();
-        shops = new StoredShops(new YamlStorage(new File(getDataFolder(), "shops.yml"), "Citizens NPC Shops"));
+        shops = new StoredShops(new YamlStorage(new File(getDataFolder(), "shops.yml")));
         if (saves == null || !shops.loadFromDisk()) {
             Messaging.severeTr(Messages.FAILED_LOAD_SAVES);
             Bukkit.getPluginManager().disablePlugin(this);
             return;
         }
-        traitFactory = new CitizensTraitFactory(this);
-        Bukkit.getPluginManager().registerEvents(traitFactory, this);
-        npcRegistry = new CitizensNPCRegistry(saves, this, "citizens");
-        temporaryRegistry = new CitizensNPCRegistry(new MemoryNPCDataStore(), this, "citizens-temporary");
+        npcRegistry = new CitizensNPCRegistry(saves, "citizens");
+        temporaryRegistry = new CitizensNPCRegistry(new MemoryNPCDataStore(), "citizens-temporary");
         locationLookup = new LocationLookup(npcRegistry);
         locationLookup.runTaskTimer(CitizensAPI.getPlugin(), 0, 5);
 
+        traitFactory = new CitizensTraitFactory(this);
+        traitFactory.registerTrait(TraitInfo.create(ShopTrait.class).withSupplier(() -> new ShopTrait(shops)));
         selector = new NPCSelector(this);
-
-        saveResource("templates/citizens/templates.yml", true);
         templateRegistry = new TemplateRegistry(new File(getDataFolder(), "templates").toPath());
-
         if (!new File(getDataFolder(), "skins").exists()) {
             new File(getDataFolder(), "skins").mkdir();
         }
-        Bukkit.getPluginManager().registerEvents(new EventListen(this), this);
+        Bukkit.getPluginManager().registerEvents(new EventListen(), this);
         Bukkit.getPluginManager().registerEvents(new Placeholders(), this);
 
         Plugin papi = Bukkit.getPluginManager().getPlugin("PlaceholderAPI");
@@ -481,6 +413,8 @@ public class Citizens extends JavaPlugin implements CitizensPlugin {
 
         registerCommands();
         NMS.load(commands);
+        PacketNpcService packetNpcService = PacketNpcService.init(PacketSinkLoader.load());
+        packetNpcService.start(this);
         Bukkit.getMessenger().registerOutgoingPluginChannel(this, "BungeeCord");
         commands.registerTabCompletion(this);
         commands.setTranslationPrefixProvider(cmd -> "citizens.commands." + cmd.aliases()[0]
@@ -488,16 +422,9 @@ public class Citizens extends JavaPlugin implements CitizensPlugin {
 
         // Setup NPCs after all plugins have been enabled (allows for multiworld
         // support and for NPCs to properly register external settings)
-        if (CitizensAPI.getScheduler().runTaskLater(new CitizensLoadTask(), 1) == null) {
+        if (getServer().getScheduler().scheduleSyncDelayedTask(this, new CitizensLoadTask(), 1) == -1) {
             Messaging.severeTr(Messages.LOAD_TASK_NOT_SCHEDULED);
             Bukkit.getPluginManager().disablePlugin(this);
-        }
-        // TODO: reimplement megavex implementation with packets to simplify this
-        try {
-            Class.forName("net.kyori.adventure.Adventure");
-            scoreboardManager = new MegavexScoreboardManager(this);
-        } catch (ClassNotFoundException e) {
-            scoreboardManager = new BukkitScoreboardManager(this);
         }
     }
 
@@ -505,22 +432,6 @@ public class Citizens extends JavaPlugin implements CitizensPlugin {
     public void onImplementationChanged() {
         Messaging.severeTr(Messages.CITIZENS_IMPLEMENTATION_DISABLED);
         Bukkit.getPluginManager().disablePlugin(this);
-    }
-
-    @Override
-    public void onLoad() {
-        if (SpigotUtil.isFoliaServer())
-            // Packet rewriting cannot be supported on Folia, because to call entities,
-            // it must be done on their thread, so there will be a 1-tick delay,
-            // therefore it is not currently supported.
-            return;
-
-        try {
-            PacketEvents.setAPI(SpigotPacketEventsBuilder.build(this));
-            PacketEvents.getAPI().load();
-            packetEventsEnabled = true;
-        } catch (Throwable t) {
-        }
     }
 
     public void registerCommandClass(Class<?> clazz) {
@@ -544,14 +455,13 @@ public class Citizens extends JavaPlugin implements CitizensPlugin {
     }
 
     public void reload() throws NPCLoadException {
-        getServer().getPluginManager().callEvent(new CitizensPreReloadEvent());
-
-        playerUpdateTask.cancel();
         Editor.leaveAll();
         config.reload();
         despawnNPCs(false);
         ProfileFetcher.reset();
         Skin.clearCache();
+
+        getServer().getPluginManager().callEvent(new CitizensPreReloadEvent());
 
         templateRegistry = new TemplateRegistry(new File(getDataFolder(), "templates").toPath());
 
@@ -560,8 +470,6 @@ public class Citizens extends JavaPlugin implements CitizensPlugin {
 
         shops.loadFromDisk();
         shops.load();
-
-        playerUpdateTask = new PlayerUpdateTask().runTaskTimer(Citizens.this, 0, 1);
 
         getServer().getPluginManager().callEvent(new CitizensReloadEvent());
     }
@@ -572,7 +480,7 @@ public class Citizens extends JavaPlugin implements CitizensPlugin {
     }
 
     private void scheduleSaveTask(int delay) {
-        CitizensAPI.getScheduler().runTaskTimer(new CitizensSaveTask(), delay, delay);
+        Bukkit.getScheduler().scheduleSyncRepeatingTask(this, new CitizensSaveTask(), delay, delay);
     }
 
     @Override
@@ -581,7 +489,7 @@ public class Citizens extends JavaPlugin implements CitizensPlugin {
             throw new IllegalArgumentException("must be non-null");
         despawnNPCs(true);
         saves = store;
-        npcRegistry = new CitizensNPCRegistry(saves, this, "citizens-global-" + UUID.randomUUID().toString());
+        npcRegistry = new CitizensNPCRegistry(saves, "citizens-global-" + UUID.randomUUID().toString());
         saves.loadInto(npcRegistry);
     }
 
@@ -590,7 +498,7 @@ public class Citizens extends JavaPlugin implements CitizensPlugin {
             RegisteredServiceProvider<Economy> provider = Bukkit.getServicesManager().getRegistration(Economy.class);
             if (provider != null && provider.getProvider() != null) {
                 Economy economy = provider.getProvider();
-                Bukkit.getPluginManager().registerEvents(new PaymentHook(economy), this);
+                Bukkit.getPluginManager().registerEvents(new PaymentListener(economy), this);
             }
             Messaging.logTr(Messages.LOADED_ECONOMY);
         } catch (NoClassDefFoundError e) {
@@ -627,13 +535,9 @@ public class Citizens extends JavaPlugin implements CitizensPlugin {
             Metrics metrics = new Metrics(this, 2463);
             metrics.addCustomChart(new Metrics.SingleLineChart("total_npcs",
                     () -> npcRegistry == null ? 0 : Iterables.size(npcRegistry)));
-            metrics.addCustomChart(new Metrics.SingleLineChart("total_templates",
-                    () -> npcRegistry == null ? 0
-                            : (int) templateRegistry.getAllTemplates().stream()
-                                    .filter(t -> !t.getKey().getNamespace().equals("citizens")).count()));
             metrics.addCustomChart(new Metrics.SimplePie("locale", () -> Locale.getDefault().getLanguage()));
             metrics.addCustomChart(new Metrics.AdvancedPie("traits", () -> {
-                Map<String, Integer> res = new HashMap<>();
+                Map<String, Integer> res = Maps.newHashMap();
                 for (NPC npc : npcRegistry) {
                     for (Trait trait : npc.getTraits()) {
                         if (traitFactory.trackStats(trait)) {
@@ -649,43 +553,33 @@ public class Citizens extends JavaPlugin implements CitizensPlugin {
     }
 
     public void storeNPCs() {
-        if (saves == null)
-            return;
-        saves.storeAll(npcRegistry);
-        shops.storeShops();
-        shops.saveToDisk();
-        saves.saveToDisk();
+        storeNPCs(false);
     }
 
-    public void storeNPCsNow() {
+    public void storeNPCs(boolean async) {
         if (saves == null)
             return;
         saves.storeAll(npcRegistry);
         shops.storeShops();
-        shops.saveToDiskImmediate();
-        saves.saveToDiskImmediate();
+        if (async) {
+            new Thread(() -> {
+                shops.saveToDisk();
+                saves.saveToDiskImmediate();
+            }).start();
+        } else {
+            shops.saveToDisk();
+            saves.saveToDiskImmediate();
+        }
+    }
+
+    @Override
+    public void talk(SpeechContext context) {
+        Util.talk(context);
     }
 
     private class CitizensLoadTask implements Runnable {
         @Override
         public void run() {
-            if (packetEventsEnabled) {
-                try {
-                    packetEventsHook = new PacketEventsHook(Citizens.this);
-                } catch (Throwable t) {
-                    Messaging.severe("PacketEvents support not enabled due to following error:");
-                    t.printStackTrace();
-                }
-            }
-            if (Bukkit.getPluginManager().getPlugin("Denizen") != null
-                    && Bukkit.getPluginManager().getPlugin("Denizen").isEnabled()) {
-                try {
-                    denizenHook = new DenizenHook(Citizens.this);
-                } catch (Throwable t) {
-                    Messaging.severe("Denizen support not enabled due to following error:");
-                    t.printStackTrace();
-                }
-            }
             saves.loadInto(npcRegistry);
             shops.load();
 
@@ -693,7 +587,7 @@ public class Citizens extends JavaPlugin implements CitizensPlugin {
             startMetrics();
             scheduleSaveTask(Setting.SAVE_TASK_FREQUENCY.asTicks());
             Bukkit.getPluginManager().callEvent(new CitizensEnableEvent());
-            playerUpdateTask = new PlayerUpdateTask().runTaskTimer(Citizens.this, 0, 1);
+            new PlayerUpdateTask().runTaskTimer(Citizens.this, 0, 1);
             enabled = true;
         }
     }
@@ -701,7 +595,7 @@ public class Citizens extends JavaPlugin implements CitizensPlugin {
     private class CitizensSaveTask implements Runnable {
         @Override
         public void run() {
-            storeNPCs();
+            storeNPCs(false);
         }
     }
 }

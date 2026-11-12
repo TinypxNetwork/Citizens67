@@ -9,6 +9,8 @@ import org.bukkit.World;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 
+import net.citizensnpcs.Settings.Setting;
+import net.citizensnpcs.api.ai.TeleportStuckAction;
 import net.citizensnpcs.api.astar.pathfinder.ChunkBlockSource;
 import net.citizensnpcs.api.command.Command;
 import net.citizensnpcs.api.command.CommandContext;
@@ -30,7 +32,7 @@ import net.citizensnpcs.util.Util;
 @Requirements(ownership = true, selected = true)
 public class WaypointCommands {
     @Command(
-            aliases = { "waypoints", "wp" },
+            aliases = { "waypoints", "waypoint", "wp" },
             usage = "add [x] [y] [z] (world) (--index idx)",
             desc = "",
             modifiers = { "add" },
@@ -57,25 +59,48 @@ public class WaypointCommands {
     }
 
     @Command(
-            aliases = { "waypoints", "wp" },
+            aliases = { "waypoints", "waypoint", "wp" },
+            usage = "disableteleport",
+            desc = "",
+            modifiers = { "disableteleport", "dt" },
+            min = 1,
+            max = 1,
+            permission = "citizens.waypoints.disableteleport")
+    public void disableTeleporting(CommandContext args, CommandSender sender, NPC npc) throws CommandException {
+        npc.data().setPersistent(NPC.Metadata.DISABLE_DEFAULT_STUCK_ACTION,
+                !npc.data().get(NPC.Metadata.DISABLE_DEFAULT_STUCK_ACTION,
+                        !Setting.DEFAULT_STUCK_ACTION.asString().contains("teleport")));
+        if (npc.data().get(NPC.Metadata.DISABLE_DEFAULT_STUCK_ACTION,
+                !Setting.DEFAULT_STUCK_ACTION.asString().contains("teleport"))) {
+            npc.getNavigator().getDefaultParameters().stuckAction(null);
+            Messaging.sendTr(sender, Messages.WAYPOINT_TELEPORTING_DISABLED, npc.getName());
+        } else {
+            npc.getNavigator().getDefaultParameters().stuckAction(TeleportStuckAction.INSTANCE);
+            Messaging.sendTr(sender, Messages.WAYPOINT_TELEPORTING_ENABLED, npc.getName());
+        }
+    }
+
+    @Command(
+            aliases = { "waypoints", "waypoint", "wp" },
             usage = "hpa",
             desc = "",
             modifiers = { "hpa" },
             min = 1,
             max = 1,
-            permission = "citizens.admin")
+            permission = "citizens.waypoints.hpa")
     public void hpa(CommandContext args, CommandSender sender, NPC npc) throws CommandException {
-        if (sender.isOp()) {
+        if (Messaging.isDebugging() && sender.isOp()) {
             HPAGraph graph = new HPAGraph(new ChunkBlockSource(npc.getStoredLocation(), 16),
                     npc.getStoredLocation().getBlockX(), npc.getStoredLocation().getBlockY(),
                     npc.getStoredLocation().getBlockZ());
             graph.addClusters(npc.getStoredLocation().getBlockX(), npc.getStoredLocation().getBlockZ());
-            System.out.println(graph.findPath(npc.getStoredLocation(), ((Player) sender).getLocation()));
+            System.out.println(graph.findPath(new Location(npc.getStoredLocation().getWorld(), 8, 68, -134),
+                    new Location(npc.getStoredLocation().getWorld(), 11, 68, -131)));
         }
     }
 
     @Command(
-            aliases = { "waypoints", "wp" },
+            aliases = { "waypoints", "waypoint", "wp" },
             usage = "provider [provider name]",
             desc = "",
             modifiers = { "provider" },
@@ -99,7 +124,7 @@ public class WaypointCommands {
     }
 
     @Command(
-            aliases = { "waypoints", "wp" },
+            aliases = { "waypoints", "waypoint", "wp" },
             usage = "remove (x y z world) (--index idx)",
             desc = "",
             modifiers = { "remove" },

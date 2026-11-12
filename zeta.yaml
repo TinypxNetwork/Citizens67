@@ -4,14 +4,14 @@ build:
   runnerImage: tinypx/lifecycle-citizens18:20261111
   steps:
     - name: build
-      command: ./mc1.8.8/build.sh package
+      command: ./build.sh package
       timeoutMs: 1800000
   artifact:
-    path: mc1.8.8/dist/target/Citizens-2.0.35-bMC1.8.8-packet.jar
+    path: dist/target/Citizens-2.0.35-bMC1.8.8-packet.jar
     package: citizens67
 test:
   runnerImage: tinypx/lifecycle-citizens18:20261111
   steps:
     - name: test
-      command: ./mc1.8.8/build.sh test
+      command: ./build.sh test
       timeoutMs: 1800000

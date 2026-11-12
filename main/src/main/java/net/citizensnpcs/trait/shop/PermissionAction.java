@@ -1,6 +1,5 @@
 package net.citizensnpcs.trait.shop;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
 
@@ -11,20 +10,21 @@ import org.bukkit.entity.HumanEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 
+import com.google.common.collect.Lists;
+
 import net.citizensnpcs.api.gui.InputMenus;
 import net.citizensnpcs.api.gui.InventoryMenuPage;
 import net.citizensnpcs.api.gui.Menu;
 import net.citizensnpcs.api.gui.MenuContext;
 import net.citizensnpcs.api.persistence.Persist;
 import net.citizensnpcs.api.util.Placeholders;
-import net.citizensnpcs.trait.ShopTrait.NPCShopStorage;
 import net.citizensnpcs.util.InventoryMultiplexer;
 import net.citizensnpcs.util.Util;
 import net.milkbowl.vault.permission.Permission;
 
 public class PermissionAction extends NPCShopAction {
     @Persist
-    public List<String> permissions = new ArrayList<>();
+    public List<String> permissions = Lists.newArrayList();
 
     public PermissionAction() {
     }
@@ -52,7 +52,7 @@ public class PermissionAction extends NPCShopAction {
     }
 
     @Override
-    public Transaction grant(NPCShopStorage storage, Entity entity, InventoryMultiplexer inventory, int repeats) {
+    public Transaction grant(Entity entity, InventoryMultiplexer inventory, int repeats) {
         if (!(entity instanceof Player))
             return Transaction.fail();
         Player player = (Player) entity;
@@ -69,7 +69,7 @@ public class PermissionAction extends NPCShopAction {
     }
 
     @Override
-    public Transaction take(NPCShopStorage storage, Entity entity, InventoryMultiplexer inventory, int repeats) {
+    public Transaction take(Entity entity, InventoryMultiplexer inventory, int repeats) {
         if (!(entity instanceof Player))
             return Transaction.fail();
         Player player = (Player) entity;
@@ -150,11 +150,6 @@ public class PermissionAction extends NPCShopAction {
         private Boolean supported;
 
         @Override
-        public boolean canUse(HumanEntity entity) {
-            return entity.hasPermission("citizens.npc.shop.editor.actions.edit-permission");
-        }
-
-        @Override
         public InventoryMenuPage createEditor(NPCShopAction previous, Consumer<NPCShopAction> callback) {
             return new PermissionActionEditor(previous == null ? new PermissionAction() : (PermissionAction) previous,
                     callback);
@@ -164,8 +159,7 @@ public class PermissionAction extends NPCShopAction {
         public ItemStack createMenuItem(NPCShopAction previous) {
             if (supported == null) {
                 try {
-                    supported = Bukkit.getServicesManager().getRegistration(Permission.class) != null
-                            && Bukkit.getServicesManager().getRegistration(Permission.class).getProvider() != null;
+                    supported = Bukkit.getServicesManager().getRegistration(Permission.class).getProvider() != null;
                 } catch (Throwable t) {
                     supported = false;
                 }

@@ -1,15 +1,14 @@
 package net.citizensnpcs.util;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
-import java.util.function.Predicate;
 
 import org.bukkit.entity.Player;
 
+import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 
 public interface EntityPacketTracker extends Runnable {
@@ -19,7 +18,7 @@ public interface EntityPacketTracker extends Runnable {
 
     public void unlinkAll(Consumer<Player> callback);
 
-    public static class PacketBundler {
+    public static class PacketAggregator {
         private final Set<PlayerConnection> connections = Sets.newHashSet();
         private List<Object> packets;
 
@@ -41,24 +40,8 @@ public interface EntityPacketTracker extends Runnable {
             }
         }
 
-        public void send(Object packet, List<UUID> ignoring) {
-            for (PlayerConnection conn : connections) {
-                if (ignoring.contains(conn.uuid))
-                    continue;
-                conn.conn.accept(packet);
-            }
-        }
-
-        public void send(Object packet, Predicate<UUID> ignoring) {
-            for (PlayerConnection conn : connections) {
-                if (ignoring.test(conn.uuid))
-                    continue;
-                conn.conn.accept(packet);
-            }
-        }
-
         public void startBundling() {
-            packets = new ArrayList<>();
+            packets = Lists.newArrayList();
         }
 
         public void stopBundlingAndSend() {
@@ -91,6 +74,7 @@ public interface EntityPacketTracker extends Runnable {
                 PlayerConnection other = (PlayerConnection) obj;
                 if (!Objects.equals(uuid, other.uuid)) {
                     return false;
+
                 }
                 return true;
             }
